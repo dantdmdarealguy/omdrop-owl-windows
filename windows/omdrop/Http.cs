@@ -245,6 +245,10 @@ public sealed class HttpConnection : IDisposable
         return new HttpConnection(tcp, tls);
     }
 
+    /// False once the peer has closed its side (readable with nothing to read).
+    public bool IsOpen =>
+        tcp.Connected && !(tcp.Client.Poll(0, System.Net.Sockets.SelectMode.SelectRead) && tcp.Client.Available == 0);
+
     public int TimeoutMs
     {
         set => tcp.ReceiveTimeout = tcp.SendTimeout = value;
@@ -253,24 +257,46 @@ public sealed class HttpConnection : IDisposable
     /// POSTs `body` (`length` bytes) and returns the status and response body.
     /// With `expectContinue`, the body waits for the peer's 100 Continue (or 2 s of
     /// silence), so a refusal comes back as a status rather than a reset mid-body.
+    /// A `length` below zero sends the body chunked, as Apple's senders send
+    /// /Upload; an iPhone hangs up on an upload with a Content-Length.
     public (int Status, byte[] Body) Post(string path, string contentType, Stream body, long length,
         bool expectContinue = false)
     {
         var head = new StringBuilder($"POST {path} HTTP/1.1\r\n");
         head.Append("Content-Type: ").Append(contentType).Append("\r\n");
-        head.Append("Content-Length: ").Append(length).Append("\r\n");
+        if (length >= 0)
+            head.Append("Content-Length: ").Append(length).Append("\r\n");
+        else
+            head.Append("Transfer-Encoding: chunked\r\n");
         if (expectContinue)
             head.Append("Expect: 100-continue\r\n");
         head.Append("Connection: keep-alive\r\nAccept: */*\r\nUser-Agent: AirDrop/1.0\r\nAccept-Language: en-us\r\n\r\n");
         tls.Write(Encoding.ASCII.GetBytes(head.ToString()));
         tls.Flush();
         bool sent = false;
-        if (!expectContinue || !tcp.Client.Poll(2_000_000, System.Net.Sockets.SelectMode.SelectRead))
+        void SendBody()
         {
-            body.CopyTo(tls);
+            if (length >= 0)
+            {
+                body.CopyTo(tls);
+            }
+            else
+            {
+                var buf = new byte[64 * 1024];
+                int n;
+                while ((n = body.Read(buf, 0, buf.Length)) > 0)
+                {
+                    tls.Write(Encoding.ASCII.GetBytes($"{n:x}\r\n"));
+                    tls.Write(buf, 0, n);
+                    tls.Write("\r\n"u8);
+                }
+                tls.Write("0\r\n\r\n"u8);
+            }
             tls.Flush();
             sent = true;
         }
+        if (!expectContinue || !tcp.Client.Poll(2_000_000, System.Net.Sockets.SelectMode.SelectRead))
+            SendBody();
 
         while (true)
         {
@@ -289,11 +315,7 @@ public sealed class HttpConnection : IDisposable
             if (code == 100)
             {
                 if (!sent)
-                {
-                    body.CopyTo(tls);
-                    tls.Flush();
-                    sent = true;
-                }
+                    SendBody();
                 continue; // interim
             }
             Stream rbody;

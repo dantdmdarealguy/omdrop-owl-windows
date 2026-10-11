@@ -60,6 +60,11 @@ maybe gzip; extract).
         flags 0x1b3fb, which has DVZip (0x02). Now: DVZip upload when the receiver has that
         flag (`--format cpio|dvzip` overrides), and `Expect: 100-continue` so a refusal is
         read as a status. Both formats loop-tested.
+  - [x] Live run 4: DVZip made no difference. The packet log shows the iPhone sending a TLS
+        close-notify right after our /Upload *headers*, with no HTTP response, on every
+        attempt. (The 266-byte record before it is a TLS 1.3 session ticket, not a reply.)
+        Apple's senders and OpenDrop's receiver use Transfer-Encoding: chunked for /Upload;
+        we sent a Content-Length. Now chunked, and on the /Ask connection unless it's closed.
   - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
         advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 

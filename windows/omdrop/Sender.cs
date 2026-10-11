@@ -165,8 +165,6 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             return false;
         }
         Log.Info($"\"{name}\" accepted; sending");
-        // iOS closes the connection after answering /Ask; the upload gets its own.
-        conn.Dispose();
 
         // DVZip if the receiver says it takes it (flag 0x02, as iOS does; Apple's
         // senders then use it), else gzip, as OpenDrop. To a temporary file: its
@@ -191,10 +189,17 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             long length = new FileInfo(tmp).Length;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             using var archive = File.OpenRead(tmp);
-            using var upload = await Connect(service, ct);
-            upload.TimeoutMs = 120_000;
+            // On the /Ask connection, as OpenDrop does, unless the receiver closed it.
+            var upload = conn;
+            if (!conn.IsOpen)
+            {
+                Log.Debug("upload: the /Ask connection is closed; opening another");
+                upload = await Connect(service, ct);
+                upload.TimeoutMs = 120_000;
+            }
+            using var extra = upload == conn ? null : upload;
             Log.Debug($"upload: {(dvzip ? "dvzip" : "gzip")} cpio, {length} bytes");
-            (status, _) = upload.Post("/Upload", dvzip ? "application/x-dvzip" : "application/x-cpio", archive, length,
+            (status, _) = upload.Post("/Upload", dvzip ? "application/x-dvzip" : "application/x-cpio", archive, -1,
                 expectContinue: true);
             double s = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
             if (status != 200)

@@ -31,8 +31,11 @@ maybe gzip; extract).
   - Run 1 (2026-10-11): not listed. The phone found our service (asked for our host's AAAA
     ~20 times in 2 min) but never POSTed /Discover; OWL carried ~2,300 unicast frames out and
     ~3,700 in. Suspect: TLS handshake failing, which Kestrel logs only at Debug.
-  - Now: `tools/airdrop-test.ps1` runs both with OWL_PKTLOG (a line per IPv6 packet over
-    awdl0) and omdrop -v (each TCP connection, Kestrel's TLS debug). Next run tells which.
+  - Run 2 (`tools/airdrop-test.ps1`, OWL_PKTLOG + omdrop -v): TCP over AWDL works and TLS 1.3
+    completes, but the iPhone's HTTP/1.1 requests have **no Host header**, which Kestrel
+    rejects (92 attempts). Replaced Kestrel with Http.cs (minimal, lenient HTTP/1.1 over
+    SslStream); the local test now sends /Discover without Host, and passes.
+  - Next: run 3 with the same script.
 - [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
 
 ## Next

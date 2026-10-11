@@ -14,8 +14,4 @@
     <Version>0.1.0</Version>
   </PropertyGroup>
 
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
 </Project>

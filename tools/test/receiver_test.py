@@ -46,12 +46,17 @@ def cpio_odc(entries):
     return out
 
 
-def post(addr, scope, path, body, headers=None, chunked=False):
+def post(addr, scope, path, body, headers=None, chunked=False, host=True):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE  # self-signed, as Apple's senders accept
     c = http.client.HTTPSConnection(f"{addr}%{scope}", 8771, context=ctx, timeout=10)
-    if chunked:
+    if not host:
+        # As Apple's sender does it: no Host header at all.
+        c.putrequest("POST", path, skip_host=True, skip_accept_encoding=True)
+        c.putheader("Content-Length", str(len(body)))
+        c.endheaders(body)
+    elif chunked:
         c.request("POST", path, body=iter([body[i:i + 1000] for i in range(0, len(body), 1000)]),
                   headers=headers or {}, encode_chunked=True)
     else:
@@ -64,10 +69,10 @@ def main():
     scope, addr, save = int(sys.argv[1]), sys.argv[2], sys.argv[3]
     mdns_query(scope)
 
-    st, body = post(addr, scope, "/Discover", plistlib.dumps({}, fmt=plistlib.FMT_BINARY))
+    st, body = post(addr, scope, "/Discover", plistlib.dumps({}, fmt=plistlib.FMT_BINARY), host=False)
     d = plistlib.loads(body)
     assert st == 200 and "ReceiverComputerName" in d, (st, d)
-    print(f"discover: {st} {d}")
+    print(f"discover (no Host header): {st} {d}")
 
     ask = {"SenderComputerName": "test sender", "BundleID": "com.apple.finder",
            "Files": [{"FileName": "hello.txt", "FileType": "public.plain-text", "FileIsDirectory": False}]}

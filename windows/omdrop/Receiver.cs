@@ -1,15 +1,10 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.AspNetCore.Server.Kestrel.Https;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace Omdrop;
 
@@ -25,6 +20,7 @@ public sealed record ReceiverOptions(
 ///   POST /Discover  who we are (binary plist)
 ///   POST /Ask       a sender's offer; accepted, and logged
 ///   POST /Upload    the files: chunked application/x-cpio, maybe gzipped
+/// HTTP is Http.cs's, not Kestrel's: Apple's sender sends no Host header.
 /// </summary>
 public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, ReceiverOptions opt)
 {
@@ -33,84 +29,114 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
 
     public async Task RunAsync(CancellationToken ct)
     {
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.Logging.ClearProviders();
-        if (opt.Verbose)
-        {
-            // Kestrel says why a TLS handshake failed only at Debug.
-            builder.Logging.AddSimpleConsole().SetMinimumLevel(LogLevel.Information);
-            builder.Logging.AddFilter("Microsoft.AspNetCore.Server.Kestrel", LogLevel.Debug);
-        }
-        builder.WebHost.ConfigureKestrel(k =>
-        {
-            k.AllowSynchronousIO = true; // the cpio extractor reads the body as a plain stream
-            k.Limits.MaxRequestBodySize = null;
-            k.Limits.MinRequestBodyDataRate = null; // AWDL on one channel is slow and bursty
-            k.Listen(new IPAddress(iface.LinkLocal.GetAddressBytes(), iface.Index), opt.Port, listen =>
-            {
-                listen.Protocols = HttpProtocols.Http1;
-                // Before TLS: every TCP connection, and how long it lasted.
-                listen.Use(next => async conn =>
-                {
-                    var sw = Stopwatch.StartNew();
-                    Log.Info($"connection from {conn.RemoteEndPoint}");
-                    try
-                    {
-                        await next(conn);
-                    }
-                    finally
-                    {
-                        Log.Info($"connection from {conn.RemoteEndPoint} closed after {sw.Elapsed.TotalSeconds:F1} s");
-                    }
-                });
-                listen.UseHttps(new HttpsConnectionAdapterOptions
-                {
-                    ServerCertificate = cert,
-                    SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                    // Senders present their own certificate; Apple doesn't verify
-                    // it in Everyone mode, and neither do we.
-                    ClientCertificateMode = ClientCertificateMode.AllowCertificate,
-                    ClientCertificateValidation = (_, _, _) => true,
-                });
-            });
-        });
-        var app = builder.Build();
-
-        // As Func<>s, so the returned IResult is what's sent (a bare method
-        // group binds as a RequestDelegate and its result would be dropped).
-        app.MapPost("/Discover", (Func<HttpContext, Task<IResult>>)Discover);
-        app.MapPost("/Ask", (Func<HttpContext, Task<IResult>>)Ask);
-        app.MapPost("/Upload", (Func<HttpContext, IResult>)Upload);
-        app.MapMethods("/{**path}", ["GET", "HEAD"], () => Results.Text("\n"));
-
+        var listener = new TcpListener(new IPAddress(iface.LinkLocal.GetAddressBytes(), iface.Index), opt.Port);
+        listener.Start();
         Log.Info($"receiver: https://[{iface.LinkLocal}]:{opt.Port}, saving to {opt.SaveDir}");
-        await app.StartAsync(ct);
+        using var stop = ct.Register(listener.Stop);
         try
         {
-            await Task.Delay(Timeout.Infinite, ct);
+            while (!ct.IsCancellationRequested)
+            {
+                var client = await listener.AcceptTcpClientAsync(ct);
+                _ = Task.Run(() => Serve(client), CancellationToken.None);
+            }
         }
-        finally
+        catch (OperationCanceledException)
         {
-            await app.StopAsync(CancellationToken.None);
+        }
+        catch (SocketException) when (ct.IsCancellationRequested)
+        {
         }
     }
 
-    async Task<IResult> Discover(HttpContext ctx)
+    void Serve(TcpClient client)
     {
-        var body = await ReadBody(ctx);
-        var sender = Describe(body);
-        Log.Info($"discover from {ctx.Connection.RemoteIpAddress}{sender}");
-        return PlistResult(new Dictionary<string, object?>
+        var remote = client.Client.RemoteEndPoint;
+        var sw = Stopwatch.StartNew();
+        Log.Info($"connection from {remote}");
+        try
         {
-            ["ReceiverComputerName"] = opt.ComputerName,
-            ["ReceiverModelName"] = opt.ModelName,
-            ["ReceiverMediaCapabilities"] = Encoding.UTF8.GetBytes("{\"Version\":1}"),
-        });
+            using (client)
+            using (var tls = new SslStream(client.GetStream(), false))
+            {
+                client.ReceiveTimeout = client.SendTimeout = 120_000;
+                tls.AuthenticateAsServer(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = cert,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                    // Senders present a certificate of their own; Apple doesn't
+                    // verify it in Everyone mode, and neither do we.
+                    ClientCertificateRequired = true,
+                    RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                });
+                Log.Debug($"{remote}: {tls.SslProtocol}, {tls.NegotiatedCipherSuite}" +
+                          (tls.RemoteCertificate is { } c ? $", sender certificate {c.Subject}" : ""));
+
+                var input = new HttpInput(tls);
+                while (HttpRequest.Read(input) is { } req)
+                {
+                    Log.Debug($"{remote}: {req.Method} {req.Path}");
+                    if (req.Header("expect")?.Equals("100-continue", StringComparison.OrdinalIgnoreCase) == true)
+                        HttpResponse.Continue(tls);
+                    bool close = Handle(req, tls, remote);
+                    if (close || req.Header("connection")?.Equals("close", StringComparison.OrdinalIgnoreCase) == true)
+                        break;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            // Everything: this runs on its own task, where an exception would vanish.
+            Log.Warn($"connection from {remote}: {e.GetType().Name}: {e.Message}" +
+                     (e.InnerException is { } inner ? $" ({inner.GetType().Name}: {inner.Message})" : ""));
+        }
+        Log.Info($"connection from {remote} closed after {sw.Elapsed.TotalSeconds:F1} s");
     }
 
-    async Task<IResult> Ask(HttpContext ctx)
+    /// Answers one request; true when the connection should close after it.
+    bool Handle(HttpRequest req, Stream s, EndPoint? remote)
     {
-        var body = await ReadBody(ctx);
+        if (req.Method == "POST" && req.Path == "/Discover")
+        {
+            var body = ReadAll(req.Body);
+            Log.Info($"discover from {remote}{Describe(body)}");
+            Reply(s, new Dictionary<string, object?>
+            {
+                ["ReceiverComputerName"] = opt.ComputerName,
+                ["ReceiverModelName"] = opt.ModelName,
+                ["ReceiverMediaCapabilities"] = Encoding.UTF8.GetBytes("{\"Version\":1}"),
+            });
+            return false;
+        }
+        if (req.Method == "POST" && req.Path == "/Ask")
+        {
+            Ask(ReadAll(req.Body));
+            Reply(s, new Dictionary<string, object?>
+            {
+                ["ReceiverModelName"] = opt.ModelName,
+                ["ReceiverComputerName"] = opt.ComputerName,
+            });
+            return false;
+        }
+        if (req.Method == "POST" && req.Path == "/Upload")
+        {
+            Upload(req, s);
+            return true;
+        }
+        if (req.Method is "GET" or "HEAD")
+        {
+            req.Drain();
+            HttpResponse.Write(s, 200, req.Method == "GET" ? "\n"u8.ToArray() : null);
+            return false;
+        }
+        Log.Warn($"{remote}: unexpected {req.Method} {req.Path}");
+        req.Drain();
+        HttpResponse.Write(s, 404, close: true);
+        return true;
+    }
+
+    void Ask(byte[] body)
+    {
         string from = "someone", files = "";
         try
         {
@@ -122,6 +148,8 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
                         .Select(f => f.GetValueOrDefault("FileName") as string ?? "?"));
                 if (ask.GetValueOrDefault("Items") is List<object?> items && items.Count > 0)
                     files += (files.Length > 0 ? ", " : "") + string.Join(", ", items.OfType<string>());
+                if (Log.Verbose)
+                    Log.Debug($"ask keys: {string.Join(", ", ask.Keys)}");
             }
         }
         catch (FormatException e)
@@ -130,45 +158,44 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         }
         lastSender = from;
         Log.Info($"{from} wants to send: {(files.Length > 0 ? files : "(no file names)")}; accepted");
-        return PlistResult(new Dictionary<string, object?>
-        {
-            ["ReceiverModelName"] = opt.ModelName,
-            ["ReceiverComputerName"] = opt.ComputerName,
-        });
     }
 
-    IResult Upload(HttpContext ctx)
+    void Upload(HttpRequest req, Stream s)
     {
-        var type = ctx.Request.ContentType?.ToLowerInvariant() ?? "";
+        var type = req.Header("content-type")?.ToLowerInvariant() ?? "";
         if (type != "application/x-cpio")
         {
             Log.Warn($"upload: Content-Type \"{type}\", not application/x-cpio");
-            return Results.StatusCode(406);
+            HttpResponse.Write(s, 406, close: true);
+            return;
         }
         var sw = Stopwatch.StartNew();
-        var counted = new CountingStream(ctx.Request.Body);
+        var counted = new CountingStream(req.Body);
         try
         {
-            var dir = Path.Combine(opt.SaveDir);
-            var files = Cpio.Extract(counted, dir);
-            double s = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
-            Log.Info($"received {files.Count} file(s) from {lastSender}: {counted.Count / 1024.0:F0} kB in {s:F1} s " +
-                     $"({counted.Count / 1024.0 / s:F0} kB/s)");
+            var files = Cpio.Extract(counted, opt.SaveDir);
+            req.Drain();
+            double secs = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
+            Log.Info($"received {files.Count} file(s) from {lastSender}: {counted.Count / 1024.0:F0} kB in {secs:F1} s " +
+                     $"({counted.Count / 1024.0 / secs:F0} kB/s)");
             foreach (var f in files)
                 Log.Info($"  {f}");
-            return Results.Ok();
+            HttpResponse.Write(s, 200, close: true);
         }
         catch (InvalidDataException e)
         {
-            Log.Error($"upload failed: {e.Message}");
-            return Results.BadRequest();
+            Log.Error($"upload failed after {counted.Count / 1024.0:F0} kB: {e.Message}");
+            HttpResponse.Write(s, 400, close: true);
         }
     }
 
-    static async Task<byte[]> ReadBody(HttpContext ctx)
+    static void Reply(Stream s, Dictionary<string, object?> dict) =>
+        HttpResponse.Write(s, 200, Plist.Write(dict), "application/octet-stream");
+
+    static byte[] ReadAll(Stream body)
     {
         using var ms = new MemoryStream();
-        await ctx.Request.Body.CopyToAsync(ms);
+        body.CopyTo(ms);
         return ms.ToArray();
     }
 
@@ -184,9 +211,6 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         }
         return "";
     }
-
-    static IResult PlistResult(Dictionary<string, object?> dict) =>
-        Results.Bytes(Plist.Write(dict), "application/octet-stream");
 
     sealed class CountingStream(Stream inner) : Stream
     {

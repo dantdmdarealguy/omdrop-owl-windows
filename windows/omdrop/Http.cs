@@ -204,3 +204,100 @@ abstract class ReadOnlyBody : Stream
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
+
+/// <summary>
+/// The client side, over one TLS connection: requests with a Content-Length
+/// body, responses read whole (Content-Length, chunked, or to close). Peers
+/// present no usable certificate name (link-local, self-signed), so none is
+/// checked; we present ours, as Apple's senders do.
+/// </summary>
+public sealed class HttpConnection : IDisposable
+{
+    readonly System.Net.Sockets.TcpClient tcp;
+    readonly System.Net.Security.SslStream tls;
+    readonly HttpInput input;
+
+    HttpConnection(System.Net.Sockets.TcpClient tcp, System.Net.Security.SslStream tls)
+    {
+        this.tcp = tcp;
+        this.tls = tls;
+        input = new HttpInput(tls);
+    }
+
+    public static async Task<HttpConnection> OpenAsync(System.Net.IPEndPoint to,
+        System.Security.Cryptography.X509Certificates.X509Certificate2 cert, TimeSpan timeout, CancellationToken ct)
+    {
+        var tcp = new System.Net.Sockets.TcpClient(System.Net.Sockets.AddressFamily.InterNetworkV6);
+        using (var t = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            t.CancelAfter(timeout);
+            await tcp.ConnectAsync(to, t.Token);
+        }
+        var tls = new System.Net.Security.SslStream(tcp.GetStream(), false);
+        await tls.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions
+        {
+            TargetHost = "airdrop",
+            ClientCertificates = [cert],
+            EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13,
+            RemoteCertificateValidationCallback = (_, _, _, _) => true,
+        }, ct);
+        Log.Debug($"{to}: {tls.SslProtocol}, {tls.NegotiatedCipherSuite}");
+        return new HttpConnection(tcp, tls);
+    }
+
+    public int TimeoutMs
+    {
+        set => tcp.ReceiveTimeout = tcp.SendTimeout = value;
+    }
+
+    /// POSTs `body` (`length` bytes) and returns the status and response body.
+    public (int Status, byte[] Body) Post(string path, string contentType, Stream body, long length)
+    {
+        var head = new StringBuilder($"POST {path} HTTP/1.1\r\n");
+        head.Append("Content-Type: ").Append(contentType).Append("\r\n");
+        head.Append("Content-Length: ").Append(length).Append("\r\n");
+        head.Append("Connection: keep-alive\r\nAccept: */*\r\nUser-Agent: AirDrop/1.0\r\nAccept-Language: en-us\r\n\r\n");
+        tls.Write(Encoding.ASCII.GetBytes(head.ToString()));
+        body.CopyTo(tls);
+        tls.Flush();
+
+        while (true)
+        {
+            var status = input.ReadLine() ?? throw new IOException("connection closed before a response");
+            var parts = status.Split(' ');
+            if (parts.Length < 2 || !int.TryParse(parts[1], out int code))
+                throw new InvalidDataException($"bad status line \"{status}\"");
+            var headers = new Dictionary<string, string>();
+            string? line;
+            while ((line = input.ReadLine()) is { Length: > 0 })
+            {
+                int colon = line.IndexOf(':');
+                if (colon > 0)
+                    headers[line[..colon].Trim().ToLowerInvariant()] = line[(colon + 1)..].Trim();
+            }
+            if (code == 100)
+                continue; // interim
+            Stream rbody;
+            if (headers.GetValueOrDefault("transfer-encoding")?.Contains("chunked", StringComparison.OrdinalIgnoreCase) == true)
+                rbody = new ChunkedStream(input);
+            else if (long.TryParse(headers.GetValueOrDefault("content-length"), out long n))
+                rbody = new LengthStream(input, n);
+            else if (headers.GetValueOrDefault("connection")?.Equals("close", StringComparison.OrdinalIgnoreCase) == true)
+                rbody = input;
+            else
+                rbody = new LengthStream(input, 0);
+            var ms = new MemoryStream();
+            rbody.CopyTo(ms);
+            return (code, ms.ToArray());
+        }
+    }
+
+    public (int Status, byte[] Body) Post(string path, string contentType, byte[] body) =>
+        Post(path, contentType, new MemoryStream(body), body.Length);
+
+    public void Dispose()
+    {
+        tls.Dispose();
+        tcp.Dispose();
+    }
+}

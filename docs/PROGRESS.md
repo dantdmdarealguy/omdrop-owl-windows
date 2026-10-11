@@ -41,7 +41,14 @@ maybe gzip; extract).
     zlib; cpio inside); the local test covers it.
   - Run 4 (2026-10-11): **two photos received** from the iPhone, 214 kB each, 1.5 s and 2.9 s
     (~150 and ~73 kB/s), intact; the second saved as "IMG_2760 (1).jpg".
-- [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
+- [ ] Sending (Phase 4b): `omdrop send FILE [--to NAME]`
+  - [x] BLE wake advert via WinRT (Ble.cs): Windows accepts Apple manufacturer data and
+        reports Started (`omdrop ble`). iOS 26 shape by default, `--legacy-ble` for the old.
+  - [x] mDNS browse on awdl0 (Browser.cs), HTTP client over SslStream (Http.cs), cpio writer,
+        /Discover /Ask /Upload (Sender.cs, as OpenDrop's client).
+  - [x] Local loop: send to our own receiver on VMnet1 (`--include-self --no-ble`): identical.
+  - [ ] Live: `toolsirdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
+        advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 
 ## Next
 - ESP32-C5 (arrives Tuesday 2026-10-13): flash, run OWL on channel 149.

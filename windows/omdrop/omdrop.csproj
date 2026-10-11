@@ -5,13 +5,16 @@
        us, and the HTTPS receiver they send to. Protocol as in OpenDrop. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>omdrop</AssemblyName>
     <RootNamespace>Omdrop</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Version>0.1.0</Version>
+    <!-- binReleaseomdrop.exe, whatever the target framework: firewall rules name the path. -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 
 </Project>

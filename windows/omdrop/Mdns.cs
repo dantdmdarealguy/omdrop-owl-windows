@@ -128,7 +128,7 @@ public sealed class Mdns : IDisposable
         bool ptr = false, srv = false, txt = false, aaaa = false, unicast = false;
         for (int i = 0; i < qd; i++)
         {
-            string name = ReadName(p, ref at).ToLowerInvariant();
+            string name = Dns.ReadName(p, ref at).ToLowerInvariant();
             ushort type = BinaryPrimitives.ReadUInt16BigEndian(p[at..]);
             ushort cls = BinaryPrimitives.ReadUInt16BigEndian(p[(at + 2)..]);
             at += 4;
@@ -159,10 +159,10 @@ public sealed class Mdns : IDisposable
     {
         var records = new List<byte[]>();
         if (answerPtr)
-            records.Add(Record(ServiceType, TypePtr, cacheFlush: false, 4500, Name(instance)));
+            records.Add(Record(ServiceType, TypePtr, cacheFlush: false, 4500, Dns.EncodeName(instance)));
         if (answerSrv)
         {
-            var rd = new byte[6].Concat(Name(host)).ToArray();
+            var rd = new byte[6].Concat(Dns.EncodeName(host)).ToArray();
             BinaryPrimitives.WriteUInt16BigEndian(rd.AsSpan(4), (ushort)servicePort); // priority 0, weight 0
             records.Add(Record(instance, TypeSrv, cacheFlush: true, 120, rd));
         }
@@ -187,7 +187,7 @@ public sealed class Mdns : IDisposable
 
     static byte[] Record(string name, ushort type, bool cacheFlush, uint ttl, byte[] rdata)
     {
-        var n = Name(name);
+        var n = Dns.EncodeName(name);
         var r = new byte[n.Length + 10 + rdata.Length];
         n.CopyTo(r, 0);
         var s = r.AsSpan(n.Length);
@@ -197,52 +197,6 @@ public sealed class Mdns : IDisposable
         BinaryPrimitives.WriteUInt16BigEndian(s[8..], (ushort)rdata.Length);
         rdata.CopyTo(r, n.Length + 10);
         return r;
-    }
-
-    static byte[] Name(string name)
-    {
-        var b = new List<byte>();
-        foreach (var label in name.TrimEnd('.').Split('.'))
-        {
-            var l = Encoding.UTF8.GetBytes(label);
-            b.Add((byte)l.Length);
-            b.AddRange(l);
-        }
-        b.Add(0);
-        return b.ToArray();
-    }
-
-    /// A name at `at`, following compression pointers; `at` ends past it.
-    static string ReadName(ReadOnlySpan<byte> p, ref int at)
-    {
-        var labels = new List<string>();
-        int pos = at, jumps = 0;
-        bool jumped = false;
-        while (true)
-        {
-            byte len = p[pos];
-            if (len == 0)
-            {
-                pos++;
-                break;
-            }
-            if ((len & 0xC0) == 0xC0)
-            {
-                int target = (len & 0x3F) << 8 | p[pos + 1];
-                if (!jumped)
-                    at = pos + 2;
-                jumped = true;
-                if (++jumps > 32)
-                    throw new FormatException("mdns: pointer loop");
-                pos = target;
-                continue;
-            }
-            labels.Add(Encoding.UTF8.GetString(p.Slice(pos + 1, len)));
-            pos += 1 + len;
-        }
-        if (!jumped)
-            at = pos;
-        return string.Join('.', labels);
     }
 
     public void Dispose() => socket.Dispose();

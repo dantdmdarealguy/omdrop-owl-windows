@@ -2,26 +2,39 @@ using System.Diagnostics;
 using System.Security.Principal;
 using Omdrop;
 
-// omdrop receive [options]: be an AirDrop receiver on awdl0, which owl.exe
-// brings up. Accepts everything offered (Everyone mode) into the save folder.
+// omdrop: AirDrop over awdl0, which owl.exe (windows/owl) brings up.
+//   receive  be a receiver: accept everything sent (Everyone mode) into a folder
+//   send     send files to a nearby Apple device
+//   ble      only the Bluetooth wake advert, to check Windows sends it
+//   firewall add the inbound rule receiving and sending need (administrator)
 
 const string Usage = """
     usage: omdrop receive [--name NAME] [--save DIR] [--iface awdl0] [--port 8771]
                           [--model NAME] [--flags N] [--burst N] [-v]
-      --name    what Apple devices list us as (default: this computer's name)
-      --save    where received files go (default: Downloads)
-      --burst   announcement copies per round; 64 suits one channel-6 radio (default)
+           omdrop send FILE... [--to NAME] [--timeout SECONDS] [--no-ble] [--legacy-ble]
+                               [--name NAME] [--iface awdl0] [-v]
+           omdrop ble [SECONDS] [--legacy-ble]
+           omdrop firewall      (administrator: allow AirDrop in, link-local only)
+      --name     what Apple devices see us as (default: this computer's name)
+      --save     where received files go (default: Downloads)
+      --burst    announcement copies per round; 64 suits one channel-6 radio (default)
+      --to       send to the receiver whose name contains this (default: the first to answer)
+      --no-ble   don't send the Bluetooth advert that wakes Apple devices
     """;
 
-if (args.Length == 0 || args[0] != "receive")
+if (args.Length == 0 || args[0] is not ("receive" or "send" or "ble" or "firewall"))
 {
     Console.Error.WriteLine(Usage);
     return 2;
 }
+string command = args[0];
 
 string name = Environment.MachineName, iface = "awdl0", model = "omdrop", save =
     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-int port = 8771, flags = 137, burst = 64;
+string? to = null;
+int port = 8771, flags = 137, burst = 64, timeout = 60, bleSeconds = 10;
+bool ble = true, legacyBle = false, includeSelf = false;
+var files = new List<string>();
 for (int i = 1; i < args.Length; i++)
 {
     string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
@@ -34,9 +47,28 @@ for (int i = 1; i < args.Length; i++)
         case "--model": model = Next(); break;
         case "--flags": flags = int.Parse(Next()); break;
         case "--burst": burst = int.Parse(Next()); break;
+        case "--to": to = Next(); break;
+        case "--timeout": timeout = int.Parse(Next()); break;
+        case "--no-ble": ble = false; break;
+        case "--legacy-ble": legacyBle = true; break;
+        case "--include-self": includeSelf = true; break; // tests: send to our own receiver
         case "-v": Log.Verbose = true; break;
+        case var a when a.StartsWith('-'):
+            Console.Error.WriteLine($"unknown option {a}\n{Usage}");
+            return 2;
+        case var a when command == "ble" && int.TryParse(a, out int s):
+            bleSeconds = s;
+            break;
+        case var a when command == "send":
+            if (!File.Exists(a))
+            {
+                Console.Error.WriteLine($"no such file: {a}");
+                return 2;
+            }
+            files.Add(Path.GetFullPath(a));
+            break;
         default:
-            Console.Error.WriteLine($"unknown option {args[i]}\n{Usage}");
+            Console.Error.WriteLine($"unexpected argument {args[i]}\n{Usage}");
             return 2;
     }
 }
@@ -48,17 +80,46 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
+if (command == "firewall")
+{
+    Firewall.Ensure(port);
+    return 0;
+}
+
+if (command == "ble")
+{
+    using var adv = new AirDropAdvert(legacyBle);
+    Log.Verbose = true;
+    adv.Start();
+    for (int i = 0; i < bleSeconds && !cts.IsCancellationRequested; i++)
+    {
+        await Task.Delay(1000);
+        Log.Info($"ble: {adv.Status}");
+    }
+    return 0;
+}
+
+if (command == "send" && files.Count == 0)
+{
+    Console.Error.WriteLine($"send what?\n{Usage}");
+    return 2;
+}
+
 try
 {
     var awdl = await AwdlInterface.WaitAsync(iface, cts.Token);
     Log.Info($"{awdl.Name}: interface {awdl.Index}, {awdl.LinkLocal}");
     Firewall.Ensure(port);
+    var cert = Identity.Load(name);
+
+    if (command == "send")
+        return await new Sender(awdl, cert, new SenderOptions(name, model, to, TimeSpan.FromSeconds(timeout), ble, legacyBle, includeSelf))
+            .SendAsync(files, cts.Token);
 
     var serviceId = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
     using var mdns = new Mdns(awdl, serviceId, port, flags);
     Log.Info($"announcing \"{name}\" as {mdns.Instance} ({mdns.Host}), flags {flags}");
-
-    var receiver = new Receiver(awdl, Identity.Load(name), new ReceiverOptions(name, model, save, port, Log.Verbose));
+    var receiver = new Receiver(awdl, cert, new ReceiverOptions(name, model, save, port, Log.Verbose));
     // 16 slots of 64 TU: one AWDL period, over which a burst is spread.
     var gap = TimeSpan.FromMilliseconds(1048.576 / Math.Max(burst, 1));
     await Task.WhenAll(
@@ -73,32 +134,37 @@ return 0;
 
 static class Firewall
 {
-    const string Rule = "omdrop AirDrop receiver (AWDL, link-local only)";
+    const string Rule = "omdrop AirDrop (AWDL, link-local only)";
 
-    /// Inbound TCP to the receiver and UDP 5353, from link-local addresses only.
-    /// Needs an administrator once; otherwise says how.
+    /// Inbound TCP to the receiver and UDP 5353 (mDNS, both directions' answers),
+    /// from link-local addresses only, for this exe. Needs an administrator once;
+    /// otherwise says how.
     public static void Ensure(int port)
     {
-        if (Netsh($"advfirewall firewall show rule name=\"{Rule}\"") == 0)
+        var exe = Environment.ProcessPath!;
+        var (code, rules) = Netsh($"advfirewall firewall show rule name=\"{Rule}\" verbose");
+        if (code == 0 && rules.Contains(exe, StringComparison.OrdinalIgnoreCase))
             return;
         bool admin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
-        var exe = Environment.ProcessPath!;
         string tcp = $"advfirewall firewall add rule name=\"{Rule}\" dir=in action=allow program=\"{exe}\" protocol=TCP localport={port} remoteip=fe80::/10";
         string udp = $"advfirewall firewall add rule name=\"{Rule}\" dir=in action=allow program=\"{exe}\" protocol=UDP localport=5353 remoteip=fe80::/10";
         if (!admin)
         {
-            Log.Warn("no firewall rule for the receiver yet, so Windows may block senders. From an administrator terminal, run once:");
+            Log.Warn("no firewall rule for this omdrop.exe yet, so Windows may block senders and answers. " +
+                     "From an administrator terminal, run once:");
             Log.Warn($"  netsh {tcp}");
             Log.Warn($"  netsh {udp}");
             return;
         }
-        if (Netsh(tcp) == 0 && Netsh(udp) == 0)
-            Log.Info($"added firewall rule \"{Rule}\"");
+        if (code == 0)
+            Netsh($"advfirewall firewall delete rule name=\"{Rule}\""); // for an older path
+        if (Netsh(tcp).Code == 0 && Netsh(udp).Code == 0)
+            Log.Info($"added firewall rule \"{Rule}\" for {exe}");
         else
             Log.Warn("could not add the firewall rule");
     }
 
-    static int Netsh(string args)
+    static (int Code, string Output) Netsh(string args)
     {
         var p = Process.Start(new ProcessStartInfo("netsh", args)
         {
@@ -107,8 +173,8 @@ static class Firewall
             UseShellExecute = false,
             CreateNoWindow = true,
         })!;
-        p.StandardOutput.ReadToEnd();
+        string output = p.StandardOutput.ReadToEnd();
         p.WaitForExit();
-        return p.ExitCode;
+        return (p.ExitCode, output);
     }
 }

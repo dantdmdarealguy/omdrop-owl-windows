@@ -45,6 +45,31 @@ public static class Cpio
         return written;
     }
 
+    /// <summary>Writes `files` as an odc cpio archive, each as "./name", as Apple's sender does.</summary>
+    public static void Write(Stream s, IEnumerable<string> files)
+    {
+        long ino = 1, mtime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        foreach (var path in files)
+        {
+            var info = new FileInfo(path);
+            mtime = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds();
+            WriteHeader(s, "./" + info.Name, 0x81A4, info.Length, ino++, mtime); // regular file, 0644
+            using var f = File.OpenRead(path);
+            f.CopyTo(s);
+        }
+        WriteHeader(s, "TRAILER!!!", 0, 0, 0, 0);
+    }
+
+    static void WriteHeader(Stream s, string name, int mode, long size, long ino, long mtime)
+    {
+        var n = Encoding.UTF8.GetBytes(name + "\0");
+        string O(long v, int width) => Convert.ToString(v, 8).PadLeft(width, '0');
+        var h = "070707" + O(0, 6) + O(ino, 6) + O(mode, 6) + O(0, 6) + O(0, 6) + O(1, 6) + O(0, 6) +
+                O(mtime, 11) + O(n.Length, 6) + O(size, 11);
+        s.Write(Encoding.ASCII.GetBytes(h));
+        s.Write(n);
+    }
+
     record Entry(string Name, int Mode, long Size, int DataPad);
 
     static Entry? ReadHeader(Stream s)

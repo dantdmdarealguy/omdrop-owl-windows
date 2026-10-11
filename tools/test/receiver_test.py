@@ -10,6 +10,7 @@ gzipped cpio /Upload (with a path-traversal entry that must not land).
 """
 import gzip
 import http.client
+import zlib
 import os
 import plistlib
 import socket
@@ -93,6 +94,20 @@ def main():
     assert open(os.path.join(save, "pics", "random.bin"), "rb").read() == payload
     assert not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(save)), "escaped.txt"))
     print(f"upload: {st}, files intact, traversal entry skipped")
+
+    # iOS 26's DVZip: big-endian length per block, bit 31 = stored, else a zlib stream.
+    raw = cpio_odc([("./dv.bin", payload[:150_000], 0o100644)])
+    dv, i, stored = b"", 0, False
+    while i < len(raw):
+        piece = raw[i:i + 40_000]
+        block = piece if stored else zlib.compress(piece)
+        dv += struct.pack(">I", len(block) | (0x80000000 if stored else 0)) + block
+        i += len(piece)
+        stored = not stored
+    st, _ = post(addr, scope, "/Upload", dv, {"Content-Type": "application/x-dvzip"}, chunked=True)
+    assert st == 200, st
+    assert open(os.path.join(save, "dv.bin"), "rb").read() == payload[:150_000]
+    print(f"upload (dvzip, zlib and stored blocks): {st}, file intact")
     print("PASS")
 
 

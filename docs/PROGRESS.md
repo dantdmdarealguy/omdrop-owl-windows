@@ -35,7 +35,11 @@ maybe gzip; extract).
     completes, but the iPhone's HTTP/1.1 requests have **no Host header**, which Kestrel
     rejects (92 attempts). Replaced Kestrel with Http.cs (minimal, lenient HTTP/1.1 over
     SslStream); the local test now sends /Discover without Host, and passes.
-  - Next: run 3 with the same script.
+  - Run 3: **listed in the AirDrop sheet**; /Discover and /Ask work ("Vaibhav's iPhone wants
+    to send: IMG_2760.jpg"), but /Upload came as `application/x-dvzip` (iOS 26), which was
+    refused. Added DvZip.cs (format per WinDrop: BE u32 per block, bit 31 = stored, else
+    zlib; cpio inside); the local test covers it.
+  - Next: run 4 with the same script.
 - [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
 
 ## Next

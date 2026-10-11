@@ -163,21 +163,25 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
     void Upload(HttpRequest req, Stream s)
     {
         var type = req.Header("content-type")?.ToLowerInvariant() ?? "";
-        if (type != "application/x-cpio")
+        // cpio (OpenDrop, older iOS; maybe gzipped), or DVZip around cpio (iOS 26).
+        if (type != "application/x-cpio" && type != "application/x-dvzip")
         {
-            Log.Warn($"upload: Content-Type \"{type}\", not application/x-cpio");
+            Log.Warn($"upload: Content-Type \"{type}\", not application/x-cpio or x-dvzip");
             HttpResponse.Write(s, 406, close: true);
             return;
         }
         var sw = Stopwatch.StartNew();
         var counted = new CountingStream(req.Body);
+        DvZipStream? dvzip = type == "application/x-dvzip" ? new DvZipStream(counted) : null;
         try
         {
-            var files = Cpio.Extract(counted, opt.SaveDir);
+            var files = Cpio.Extract(dvzip ?? (Stream)counted, opt.SaveDir);
             req.Drain();
             double secs = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
             Log.Info($"received {files.Count} file(s) from {lastSender}: {counted.Count / 1024.0:F0} kB in {secs:F1} s " +
                      $"({counted.Count / 1024.0 / secs:F0} kB/s)");
+            if (dvzip != null)
+                Log.Debug($"dvzip: {dvzip.Blocks} block(s), {dvzip.StoredBlocks} stored");
             foreach (var f in files)
                 Log.Info($"  {f}");
             HttpResponse.Write(s, 200, close: true);

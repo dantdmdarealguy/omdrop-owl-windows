@@ -95,7 +95,9 @@ This is a standalone project, not a fork. Its design and starting point come fro
   project (SEEMOO, TU Darmstadt), via the
   [jedbillyb/owl](https://github.com/jedbillyb/owl) fork: the userspace AWDL implementation.
 - **[OpenDrop](https://github.com/seemoo-lab/opendrop)**: the open AirDrop implementation
-  the others build on.
+  the others build on, and the protocol `windows/omdrop` follows.
+- **[WinDrop](https://github.com/UvejsGj/WinDrop)** (MIT): its reverse-engineering of
+  DVZip, the upload format iOS 26 uses, which `windows/omdrop/DvZip.cs` decodes.
 
 ## License
 

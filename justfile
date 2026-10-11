@@ -23,7 +23,7 @@ build-owl:
 
 # Run OWL on the ESP32 with awdl0 (run from an administrator terminal)
 owl *ARGS: build-owl
-    ./windows/owl/build/owl.exe -i {{port}} -c 6 -N -F -E -S pin -v {{ARGS}}
+    ./windows/owl/build/owl.exe -i {{port}} -c 6 -N -F -E -S pin -T -v {{ARGS}}
 
 # Phase 0: run one spike test (hello, capture, ack-test, link)
 spike TEST *ARGS:

@@ -40,6 +40,7 @@
 #include "log.h"
 #include "netutils.h"
 #include "proto.h"
+#include "state.h" /* clock_time_us */
 #include "wintun.h"
 
 #define WLAN_FD 7701
@@ -148,7 +149,50 @@ static struct {
 	} hello;
 
 	volatile LONG tx_errors, tx_acked, tx_unacked, rx_frames, rx_dropped, bad;
+
+	/* The radio's receive clock against clock_time_us() (reader thread only). */
+	uint32_t ts_last;
+	uint64_t ts_high;
+	int64_t offset; /* host - radio, us: the least-delayed frame's */
+	int have_offset;
+	uint64_t delay_sum, delay_n, delay_max, delay_report;
 } radio;
+
+/*
+ * When the radio heard a frame, in clock_time_us()'s clock, for OWL's sync
+ * (owl -T, patches/owl-07). A frame reaches us a variable while after the
+ * radio heard it: the serial line, USB polling, thread wakeups. The fastest
+ * frames bound the clock offset from above, so the offset follows the lower
+ * envelope of host-minus-radio, allowed to creep up 1 us per frame for the two
+ * crystals' drift. Each frame's delay is reported, as a measure of what -T
+ * saves sync from.
+ */
+static uint64_t rx_host_time(uint32_t ts)
+{
+	uint64_t now = clock_time_us();
+	if (ts < radio.ts_last)
+		radio.ts_high += 1ull << 32; /* the radio's 32-bit us counter wraps every 71 minutes */
+	radio.ts_last = ts;
+	int64_t sample = (int64_t) now - (int64_t) (radio.ts_high | ts);
+	if (!radio.have_offset || sample < radio.offset + 1) {
+		radio.offset = sample;
+		radio.have_offset = 1;
+	} else {
+		radio.offset += 1;
+	}
+	uint64_t delay = (uint64_t) (sample - radio.offset);
+	radio.delay_sum += delay;
+	radio.delay_n++;
+	if (delay > radio.delay_max)
+		radio.delay_max = delay;
+	if (now - radio.delay_report > 10000000 && radio.delay_n) {
+		log_info("radio: frames reach OWL %.1f ms after the radio hears them (mean; max %.1f ms)",
+		         radio.delay_sum / (double) radio.delay_n / 1000.0, radio.delay_max / 1000.0);
+		radio.delay_sum = radio.delay_n = radio.delay_max = 0;
+		radio.delay_report = now;
+	}
+	return (uint64_t) ((int64_t) (radio.ts_high | ts) + radio.offset);
+}
 
 static void radio_queue(uint8_t type, const void *a, size_t alen, const void *b, size_t blen)
 {
@@ -231,13 +275,13 @@ static void rx_push(const uint8_t *body, size_t len)
 	uint8_t *p = r->data;
 	uint16_t freq = ch == 14 ? 2484 : ch < 14 ? 2407 + 5 * ch : 5000 + 5 * ch;
 	uint16_t chflags = ch <= 14 ? 0x0080 : 0x0100;
-	uint64_t tsft = ts;
+	uint64_t tsft = rx_host_time(ts);
 	uint32_t present = 1u << IEEE80211_RADIOTAP_TSFT | 1u << IEEE80211_RADIOTAP_FLAGS |
 	                   1u << IEEE80211_RADIOTAP_CHANNEL | 1u << IEEE80211_RADIOTAP_DBM_ANTSIGNAL;
 	memset(p, 0, RT_LEN);
 	p[2] = RT_LEN; /* it_len, little-endian */
 	memcpy(p + 4, &present, 4);
-	memcpy(p + 8, &tsft, 8);   /* TSFT, 8-aligned */
+	memcpy(p + 8, &tsft, 8);   /* TSFT, 8-aligned: clock_time_us() at reception (owl -T) */
 	p[16] = 0;                 /* flags: no FCS, the radio strips it */
 	memcpy(p + 18, &freq, 2);  /* channel, 2-aligned */
 	memcpy(p + 20, &chflags, 2);

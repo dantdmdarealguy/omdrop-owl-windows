@@ -1,0 +1,87 @@
+diff --git i/daemon/owl.c w/daemon/owl.c
+index d65cd29..fbb3192 100644
+--- i/daemon/owl.c
++++ w/daemon/owl.c
+@@ -94,6 +94,7 @@ int main(int argc, char *argv[]) {
+ 	int fixed_radio = 0;
+ 	int metric_first = 0;
+ 	int no_monitor_mode = 0;
++	int rx_tsft_host_clock = 0;
+ 	enum awdl_chanseq_strategy strategy = AWDL_CHANSEQ_VERBATIM;
+ 	int widen_max = 4;
+ 	struct ether_addr addr_override;
+@@ -106,7 +107,7 @@ int main(int argc, char *argv[]) {
+ 
+ 	struct daemon_state state;
+ 
+-	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:W:R:m:FE")) != -1) {
++	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:W:R:m:FET")) != -1) {
+ 		switch (c) {
+ 			case 'm': {
+ 				/* Our AWDL address, instead of the monitor interface's MAC. On
+@@ -197,6 +198,11 @@ int main(int argc, char *argv[]) {
+ 			case 'N':
+ 				no_monitor_mode = 1;
+ 				break;
++			case 'T':
++				/* The radio's TSFT is clock_time_us() at reception (owl.exe's
++				 * ESP32 radio); use it to time received frames. */
++				rx_tsft_host_clock = 1;
++				break;
+ 			case '?':
+ 				if (optopt == 'i')
+ 					fprintf(stderr, "Option -%c needs to specify a wireless interface.\n", optopt);
+@@ -277,6 +283,7 @@ int main(int argc, char *argv[]) {
+ 		return EXIT_FAILURE;
+ 	}
+ 	state.awdl_state.filter_rssi = filter_rssi;
++	state.awdl_state.rx_tsft_host_clock = rx_tsft_host_clock;
+ 	state.awdl_state.channel.strategy = strategy;
+ 	state.awdl_state.channel.widen_max = widen_max;
+ 	state.awdl_state.channel.fixed_radio = fixed_radio;
+diff --git i/src/rx.c w/src/rx.c
+index 4581ae5..9b7f75b 100644
+--- i/src/rx.c
++++ w/src/rx.c
+@@ -487,9 +487,15 @@ int awdl_rx(const struct buf *frame, struct buf ***data_frame, struct awdl_state
+ 	uint64_t tsft;
+ 	uint8_t flags;
+ 
+-	tsft = clock_time_us(); /* TODO Radiotap TSFT is more accurate but then need to access TSF in clock_time_us() */
+-	if (radiotap_parse(frame, &rssi, &flags, NULL /* &tsft */) < 0)
++	tsft = 0;
++	if (radiotap_parse(frame, &rssi, &flags, &tsft) < 0)
+ 		return RX_UNEXPECTED_FORMAT;
++	/* A card's TSFT counts its own TSF, not clock_time_us(), so it's only used
++	 * when the radio says it's the host clock (-T): a radio behind a serial
++	 * link, where a frame can wait milliseconds before we see it, and the
++	 * reception time is what sync needs. */
++	if (!state->rx_tsft_host_clock || !tsft)
++		tsft = clock_time_us();
+ 	BUF_STRIP(frame, le16toh(((const struct ieee80211_radiotap_header *) buf_data(frame))->it_len));
+ 
+ 	if (check_fcs(frame, flags)) /* note that if no flags are present (flags==0), frames will pass */
+diff --git i/src/state.c w/src/state.c
+index 7bfddb5..7df362f 100644
+--- i/src/state.c
++++ w/src/state.c
+@@ -48,6 +48,7 @@ void awdl_init_state(struct awdl_state *state, const char *hostname, const struc
+ 	state->peer_remove_cb_data = 0;
+ 
+ 	state->filter_rssi = 1;
++	state->rx_tsft_host_clock = 0;
+ 	state->rssi_threshold = RSSI_THRESHOLD_DEFAULT;
+ 	state->rssi_grace = RSSI_GRACE_DEFAULT;
+ 
+diff --git i/src/state.h w/src/state.h
+index b5a0570..e381ec0 100644
+--- i/src/state.h
++++ w/src/state.h
+@@ -74,6 +74,7 @@ struct awdl_state {
+ 	void *peer_remove_cb_data;
+ 
+ 	int filter_rssi; /* whether or not to filter (default: true) */
++	int rx_tsft_host_clock; /* -T: radiotap TSFT is clock_time_us() at reception */
+ 	signed char rssi_threshold; /* peers exceeding this threshold are discovered */
+ 	signed char rssi_grace; /* once discovered accept lower RSSI */
+ 

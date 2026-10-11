@@ -76,7 +76,7 @@ build unchanged. The radio, `awdl0` and the event loop are replaced:
 ```powershell
 tools\build-owl.ps1
 # from an administrator terminal (creating awdl0 needs it):
-windows\owl\build\owl.exe -i COM9 -c 6 -N -F -E -S pin -v
+windows\owl\build\owl.exe -i COM9 -c 6 -N -F -E -S pin -T -v
 # without awdl0, no admin needed: add -h ""
 ```
 

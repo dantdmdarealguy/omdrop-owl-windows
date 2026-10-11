@@ -145,8 +145,17 @@ compile upstream `src/*.c` and `daemon/owl.c` together with Windows files:
   address (manual, preferred). An iPhone at close range passes OWL's -65 dBm filter, is
   added and elected sync master, and Windows' own IPv6 multicast (mDNS, MLD) leaves
   through OWL and the ESP (404 frames in 2 minutes). Ctrl-C tears awdl0 down cleanly.
-- ⏳ Unicast both ways: `ping` from Windows to the phone over awdl0 (OWL logs each peer's
-  address), and whether received data reaches Windows.
+- ✅ Unicast both ways: `ping` from Windows to an iPhone over awdl0 got replies (20 ms, 279 ms,
+  2.3 s), the first IPv6 round trip through the ESP. Two things then stopped it:
+  - A lost wakeup in ev_win.c, now fixed: Wintun's read event is auto-reset, so the
+    WaitForMultipleObjects that saw it consumed it, and re-polling found nothing. Wintun
+    signals once per empty-to-nonempty edge, so awdl0 stopped being read for good.
+  - The phone gives channel 6 one or two slots in 16 (it advertised
+    `149,149,149,0,0,0,0,0,6,6,149,0,...`), so unicast waits for those. The ESP32-C5 on
+    149 removes this.
+- Sync: 78% of measurements within OWL's ±3 TU threshold; frames reach OWL 0.8 ms (max
+  2.3 ms) after the ESP hears them. owl-07 (`-T`) times received frames by the ESP's clock
+  mapped to the host's, so that delay stays out of sync.
 - To look at: 33 TX errors in ~3,300 frames from the radio.
 
 ## Phase 3: radio helper → `OmdropOwl` Windows service (.NET 8, runs as SYSTEM)

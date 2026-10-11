@@ -242,12 +242,15 @@ static double run_timers(struct ev_loop *loop)
 static void wait_handles(struct ev_loop *loop, double timeout)
 {
 	HANDLE hs[MAXIMUM_WAIT_OBJECTS];
+	ev_io *owner[MAXIMUM_WAIT_OBJECTS] = {NULL}; /* the watcher each handle belongs to */
 	DWORD n = 0, ms = INFINITE;
 	hs[n++] = loop->wake;
 	for (int i = 0; i < loop->nios; i++) {
 		struct fd_map *m = fd_lookup(loop->ios[i]->fd);
-		for (int k = 0; m && k < m->n && n < MAXIMUM_WAIT_OBJECTS - 1; k++)
+		for (int k = 0; m && k < m->n && n < MAXIMUM_WAIT_OBJECTS - 1; k++) {
+			owner[n] = loop->ios[i];
 			hs[n++] = m->h[k];
+		}
 	}
 	if (timeout <= 0) {
 		ms = 0;
@@ -262,11 +265,19 @@ static void wait_handles(struct ev_loop *loop, double timeout)
 			ms = (DWORD) (timeout * 1000.0 + 0.999);
 		}
 	}
-	WaitForMultipleObjects(n, hs, FALSE, ms);
+	DWORD r = WaitForMultipleObjects(n, hs, FALSE, ms);
 	if (loop->timer)
 		CancelWaitableTimer(loop->timer);
 
-	/* Every ready watcher, not only the first handle Windows reports. */
+	/* The handle that ended the wait counts as ready even though it may read
+	 * as unsignaled now: an auto-reset event (Wintun's read event is one) is
+	 * consumed by the wait that sees it, and polling it again loses the
+	 * wakeup. Wintun signals once per empty-to-nonempty edge, so a lost one
+	 * stalled awdl0 for good. */
+	if (r >= WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + n && owner[r - WAIT_OBJECT_0])
+		ev_feed_event(loop, owner[r - WAIT_OBJECT_0], EV_READ);
+
+	/* Every other ready watcher, not only the first handle Windows reports. */
 	for (int i = 0; i < loop->nios; i++) {
 		struct fd_map *m = fd_lookup(loop->ios[i]->fd);
 		for (int k = 0; m && k < m->n; k++) {

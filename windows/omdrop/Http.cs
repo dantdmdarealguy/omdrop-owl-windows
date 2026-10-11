@@ -251,15 +251,26 @@ public sealed class HttpConnection : IDisposable
     }
 
     /// POSTs `body` (`length` bytes) and returns the status and response body.
-    public (int Status, byte[] Body) Post(string path, string contentType, Stream body, long length)
+    /// With `expectContinue`, the body waits for the peer's 100 Continue (or 2 s of
+    /// silence), so a refusal comes back as a status rather than a reset mid-body.
+    public (int Status, byte[] Body) Post(string path, string contentType, Stream body, long length,
+        bool expectContinue = false)
     {
         var head = new StringBuilder($"POST {path} HTTP/1.1\r\n");
         head.Append("Content-Type: ").Append(contentType).Append("\r\n");
         head.Append("Content-Length: ").Append(length).Append("\r\n");
+        if (expectContinue)
+            head.Append("Expect: 100-continue\r\n");
         head.Append("Connection: keep-alive\r\nAccept: */*\r\nUser-Agent: AirDrop/1.0\r\nAccept-Language: en-us\r\n\r\n");
         tls.Write(Encoding.ASCII.GetBytes(head.ToString()));
-        body.CopyTo(tls);
         tls.Flush();
+        bool sent = false;
+        if (!expectContinue || !tcp.Client.Poll(2_000_000, System.Net.Sockets.SelectMode.SelectRead))
+        {
+            body.CopyTo(tls);
+            tls.Flush();
+            sent = true;
+        }
 
         while (true)
         {
@@ -276,7 +287,15 @@ public sealed class HttpConnection : IDisposable
                     headers[line[..colon].Trim().ToLowerInvariant()] = line[(colon + 1)..].Trim();
             }
             if (code == 100)
+            {
+                if (!sent)
+                {
+                    body.CopyTo(tls);
+                    tls.Flush();
+                    sent = true;
+                }
                 continue; // interim
+            }
             Stream rbody;
             if (headers.GetValueOrDefault("transfer-encoding")?.Contains("chunked", StringComparison.OrdinalIgnoreCase) == true)
                 rbody = new ChunkedStream(input);
@@ -288,6 +307,9 @@ public sealed class HttpConnection : IDisposable
                 rbody = new LengthStream(input, 0);
             var ms = new MemoryStream();
             rbody.CopyTo(ms);
+            if (code >= 400)
+                Log.Debug($"{path}: HTTP {code}, {string.Join(", ", headers.Select(h => $"{h.Key}: {h.Value}"))}" +
+                          (ms.Length > 0 ? $", body {Encoding.UTF8.GetString(ms.ToArray()).Trim()}" : ""));
             return (code, ms.ToArray());
         }
     }

@@ -55,6 +55,11 @@ maybe gzip; extract).
         then reset the upload: iOS closes the connection (FIN) after its /Ask reply, and we
         wrote /Upload into it. Upload now opens its own connection; failures are logged,
         not a crash.
+  - [x] Live run 3: the phone answered the new upload connection with a ~240-byte HTTP
+        response (an error, unread) and closed it after ~10 kB of gzip cpio. It advertises
+        flags 0x1b3fb, which has DVZip (0x02). Now: DVZip upload when the receiver has that
+        flag (`--format cpio|dvzip` overrides), and `Expect: 100-continue` so a refusal is
+        read as a status. Both formats loop-tested.
   - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
         advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 

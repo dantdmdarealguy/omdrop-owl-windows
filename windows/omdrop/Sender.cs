@@ -5,7 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 namespace Omdrop;
 
 public sealed record SenderOptions(string ComputerName, string ModelName, string? To, TimeSpan Timeout, bool Ble, bool LegacyBle,
-    bool IncludeSelf = false);
+    bool IncludeSelf = false, string? Format = null);
 
 /// <summary>
 /// Sending, as OpenDrop's client does it: wake nearby devices over Bluetooth,
@@ -168,18 +168,34 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
         // iOS closes the connection after answering /Ask; the upload gets its own.
         conn.Dispose();
 
-        // The archive, gzipped, to a temporary file: its length goes first.
+        // DVZip if the receiver says it takes it (flag 0x02, as iOS does; Apple's
+        // senders then use it), else gzip, as OpenDrop. To a temporary file: its
+        // length goes first.
+        bool dvzip = opt.Format == "dvzip" || (opt.Format == null && service.Flags is { } fl && (fl & 0x02) != 0);
         var tmp = Path.GetTempFileName();
         try
         {
-            using (var gz = new GZipStream(File.Create(tmp), CompressionLevel.Fastest))
+            if (dvzip)
+            {
+                var cpio = new MemoryStream();
+                Cpio.Write(cpio, files);
+                cpio.Position = 0;
+                using var outFile = File.Create(tmp);
+                DvZipStream.Encode(cpio, outFile);
+            }
+            else
+            {
+                using var gz = new GZipStream(File.Create(tmp), CompressionLevel.Fastest);
                 Cpio.Write(gz, files);
+            }
             long length = new FileInfo(tmp).Length;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             using var archive = File.OpenRead(tmp);
             using var upload = await Connect(service, ct);
             upload.TimeoutMs = 120_000;
-            (status, _) = upload.Post("/Upload", "application/x-cpio", archive, length);
+            Log.Debug($"upload: {(dvzip ? "dvzip" : "gzip")} cpio, {length} bytes");
+            (status, _) = upload.Post("/Upload", dvzip ? "application/x-dvzip" : "application/x-cpio", archive, length,
+                expectContinue: true);
             double s = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
             if (status != 200)
             {

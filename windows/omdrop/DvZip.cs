@@ -15,6 +15,33 @@ namespace Omdrop;
 /// </summary>
 public sealed class DvZipStream(Stream source) : Stream
 {
+    /// Encodes `input` as DVZip: blocks of up to 64 KiB of input, each zlib
+    /// unless that doesn't make it smaller, then stored.
+    public static void Encode(Stream input, Stream output, int blockSize = 64 * 1024)
+    {
+        var raw = new byte[blockSize];
+        while (true)
+        {
+            int n = 0, r;
+            while (n < raw.Length && (r = input.Read(raw, n, raw.Length - n)) > 0)
+                n += r;
+            if (n == 0)
+                return;
+            var z = new MemoryStream();
+            using (var zs = new ZLibStream(z, CompressionLevel.Fastest, leaveOpen: true))
+                zs.Write(raw, 0, n);
+            bool stored = z.Length >= n;
+            uint header = stored ? (uint)n | Stored : (uint)z.Length;
+            output.Write([(byte)(header >> 24), (byte)(header >> 16), (byte)(header >> 8), (byte)header]);
+            if (stored)
+                output.Write(raw, 0, n);
+            else
+                z.WriteTo(output);
+            if (n < raw.Length)
+                return;
+        }
+    }
+
     const uint Stored = 0x8000_0000;
     const int MaxBlock = 16 * 1024 * 1024; // refuse absurd lengths from a hostile peer
 

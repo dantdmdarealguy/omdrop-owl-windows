@@ -34,6 +34,7 @@ string name = Environment.MachineName, iface = "awdl0", model = "omdrop", save =
 string? to = null;
 int port = 8771, flags = 137, burst = 64, timeout = 60, bleSeconds = 10;
 bool ble = true, legacyBle = false, includeSelf = false;
+string? format = null;
 var files = new List<string>();
 for (int i = 1; i < args.Length; i++)
 {
@@ -52,6 +53,7 @@ for (int i = 1; i < args.Length; i++)
         case "--no-ble": ble = false; break;
         case "--legacy-ble": legacyBle = true; break;
         case "--include-self": includeSelf = true; break; // tests: send to our own receiver
+        case "--format": format = Next(); break;              // dvzip or cpio (default: by the receiver's flags)
         case "-v": Log.Verbose = true; break;
         case var a when a.StartsWith('-'):
             Console.Error.WriteLine($"unknown option {a}\n{Usage}");
@@ -113,7 +115,7 @@ try
     var cert = Identity.Load(name);
 
     if (command == "send")
-        return await new Sender(awdl, cert, new SenderOptions(name, model, to, TimeSpan.FromSeconds(timeout), ble, legacyBle, includeSelf))
+        return await new Sender(awdl, cert, new SenderOptions(name, model, to, TimeSpan.FromSeconds(timeout), ble, legacyBle, includeSelf, format))
             .SendAsync(files, cts.Token);
 
     var serviceId = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();

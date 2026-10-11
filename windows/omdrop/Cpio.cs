@@ -70,6 +70,8 @@ public static class Cpio
         s.Write(n);
     }
 
+    static string? LastMagic;
+
     record Entry(string Name, int Mode, long Size, int DataPad);
 
     static Entry? ReadHeader(Stream s)
@@ -78,6 +80,9 @@ public static class Cpio
         if (magic == null)
             return null;
         string m = Encoding.ASCII.GetString(magic);
+        if (LastMagic != m)
+            Log.Debug($"cpio: format {m}");
+        LastMagic = m;
         if (m == "070707")
         {
             // odc: octal fields; dev ino mode uid gid nlink rdev (6 each), mtime (11),

@@ -3,6 +3,8 @@
  * has no counterpart here: the radio is an ESP32 (esp.h), always in
  * "monitor mode", and awdl0's neighbours live in io_esp.c.
  */
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <errno.h>
 #include <string.h>
@@ -78,8 +80,10 @@ int get_hostname(char *name, size_t len)
 
 int neighbor_add(int ifindex, const struct ether_addr *eth, const struct in6_addr *in6)
 {
-	(void) ifindex;
+	char s[INET6_ADDRSTRLEN];
 	host_neighbor_set(in6, eth);
+	/* Ready to paste: ping fe80::...%ifindex */
+	log_info("awdl0: peer %s is %s%%%d", ether_ntoa(eth), inet_ntop(AF_INET6, in6, s, sizeof s), ifindex);
 	return 0;
 }
 

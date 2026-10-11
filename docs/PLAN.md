@@ -141,8 +141,13 @@ compile upstream `src/*.c` and `daemon/owl.c` together with Windows files:
   MCS short-GI values differ between the S3 and the C5.
 - ✅ Without awdl0 (`-h ""`): OWL sends PSF/MIF through the ESP (~24 a second), adds a
   nearby Apple device as a peer, elects it sync master and pins channel 6.
-- ⏳ With awdl0 (Wintun, needs admin): an iPhone's AirDrop sheet, `add peer` with the phone
-  at close range, and IPv6 traffic over awdl0.
+- ✅ With awdl0 (admin): the adapter comes up as "awdl0" with our RFC 4291 link-local
+  address (manual, preferred). An iPhone at close range passes OWL's -65 dBm filter, is
+  added and elected sync master, and Windows' own IPv6 multicast (mDNS, MLD) leaves
+  through OWL and the ESP (404 frames in 2 minutes). Ctrl-C tears awdl0 down cleanly.
+- ⏳ Unicast both ways: `ping` from Windows to the phone over awdl0 (OWL logs each peer's
+  address), and whether received data reaches Windows.
+- To look at: 33 TX errors in ~3,300 frames from the radio.
 
 ## Phase 3: radio helper → `OmdropOwl` Windows service (.NET 8, runs as SYSTEM)
 

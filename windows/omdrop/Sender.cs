@@ -124,6 +124,20 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
 
     async Task<bool> SendToAsync(AirDropService service, string name, IReadOnlyList<string> files, CancellationToken ct)
     {
+        try
+        {
+            return await TrySendToAsync(service, name, files, ct);
+        }
+        catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or InvalidDataException
+                                       or System.Security.Authentication.AuthenticationException)
+        {
+            Log.Error($"sending to \"{name}\" failed: {e.Message}");
+            return false;
+        }
+    }
+
+    async Task<bool> TrySendToAsync(AirDropService service, string name, IReadOnlyList<string> files, CancellationToken ct)
+    {
         Log.Info($"asking \"{name}\" to accept {string.Join(", ", files.Select(Path.GetFileName))}; waiting for them to tap Accept");
         using var conn = await Connect(service, ct);
         conn.TimeoutMs = 120_000; // the other person has to accept
@@ -151,6 +165,8 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             return false;
         }
         Log.Info($"\"{name}\" accepted; sending");
+        // iOS closes the connection after answering /Ask; the upload gets its own.
+        conn.Dispose();
 
         // The archive, gzipped, to a temporary file: its length goes first.
         var tmp = Path.GetTempFileName();
@@ -161,7 +177,9 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             long length = new FileInfo(tmp).Length;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             using var archive = File.OpenRead(tmp);
-            (status, _) = conn.Post("/Upload", "application/x-cpio", archive, length);
+            using var upload = await Connect(service, ct);
+            upload.TimeoutMs = 120_000;
+            (status, _) = upload.Post("/Upload", "application/x-cpio", archive, length);
             double s = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
             if (status != 200)
             {

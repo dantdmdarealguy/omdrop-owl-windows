@@ -901,6 +901,7 @@ static void pktlog(const char *dir, const uint8_t *ip, int len)
 	}
 	if (!enabled || len < 40)
 		return;
+	len = 40 + (ip[4] << 8 | ip[5]); /* the payload length, not the buffer's */
 	char src[INET6_ADDRSTRLEN], dst[INET6_ADDRSTRLEN], what[96] = "";
 	inet_ntop(AF_INET6, ip + 8, src, sizeof src);
 	inet_ntop(AF_INET6, ip + 24, dst, sizeof dst);
@@ -931,6 +932,9 @@ int host_send(const struct io_state *state, const uint8_t *buf, int len)
 		return 0; /* AWDL carries IPv6 only */
 	const uint8_t *ip = buf + 14;
 	int iplen = len - 14;
+	/* OWL's frames can run past the packet; IPv6 says where it ends. */
+	if (40 + (ip[4] << 8 | ip[5]) < iplen)
+		iplen = 40 + (ip[4] << 8 | ip[5]);
 
 	/* Learn the sender: its address and MAC, as the kernel's neighbour cache would. */
 	if (ip[8] != 0xff) {

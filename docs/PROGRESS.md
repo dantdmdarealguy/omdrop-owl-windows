@@ -51,6 +51,10 @@ maybe gzip; extract).
         stranger's Mac, which the first version then sent an /Ask (file name only, cancelled
         within a second). Fixed: `send` never picks a recipient itself. `--to` needs an exact
         name; without it, devices are listed and the user picks a number. Tested locally.
+  - [x] Live run 2: with `--to "Vaibhav's iPhone"` the phone showed the prompt and accepted,
+        then reset the upload: iOS closes the connection (FIN) after its /Ask reply, and we
+        wrote /Upload into it. Upload now opens its own connection; failures are logged,
+        not a crash.
   - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
         advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 

@@ -20,10 +20,13 @@ maybe gzip; extract).
 - [x] .NET 8 SDK (installed per-user to `%USERPROFILE%\.dotnet`, no admin; build with `~/.dotnet/dotnet build windows/omdrop`)
 - [x] Project skeleton, finds awdl0 (name, index, fe80:: address), waits for it
 - [x] Binary plist reader/writer (Plist.cs)
-- [x] mDNS responder + unsolicited announcements on awdl0 (Mdns.cs; untested)
-- [x] HTTPS server: /Discover, /Ask, /Upload (cpio odc/newc, gzip), safe extraction (Receiver.cs, Cpio.cs; untested)
+- [x] mDNS responder + unsolicited announcements on awdl0 (Mdns.cs)
+- [x] HTTPS server: /Discover, /Ask, /Upload (cpio odc/newc, gzip), safe extraction (Receiver.cs, Cpio.cs)
 - [x] Firewall rule (link-local only) when run elevated, else prints the netsh lines
-- [ ] Local test against another interface (tools/test/receiver_test.py)
+- [x] Local test against another interface: `tools/test/receiver_test.py` passes on the VMware
+      host-only adapter (mDNS answer, /Discover, /Ask, chunked gzip cpio /Upload, traversal
+      entry skipped). Found: on Windows, MulticastLoopback=false stops a socket *receiving*
+      multicast sent from this machine.
 - [ ] Test: the iPhone lists the PC in its AirDrop sheet; then a photo arrives
 - [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
 

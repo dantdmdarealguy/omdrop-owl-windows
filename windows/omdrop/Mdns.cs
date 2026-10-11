@@ -50,7 +50,10 @@ public sealed class Mdns : IDisposable
             new IPv6MulticastOption(Group, iface.Index));
         socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.MulticastInterface, iface.Index);
         socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.MulticastTimeToLive, 255);
-        socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.MulticastLoopback, false);
+        // On Windows this governs receiving: off, the socket hears no multicast
+        // sent from this machine, tests' queries included. Our own announcements
+        // loop back too, as responses, which Handle ignores.
+        socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.MulticastLoopback, true);
     }
 
     public string Instance => instance;
@@ -77,6 +80,7 @@ public sealed class Mdns : IDisposable
     {
         var buf = new byte[9000];
         EndPoint any = new IPEndPoint(IPAddress.IPv6Any, 0);
+        Log.Debug($"mdns: listening on {socket.LocalEndPoint}, interface {iface.Index}");
         while (!ct.IsCancellationRequested)
         {
             SocketReceiveMessageFromResult r;
@@ -84,13 +88,23 @@ public sealed class Mdns : IDisposable
             {
                 r = await socket.ReceiveMessageFromAsync(buf, SocketFlags.None, any, ct);
             }
-            catch (SocketException e)
+            catch (OperationCanceledException)
             {
-                Log.Debug($"mdns: receive failed: {e.SocketErrorCode}");
+                throw;
+            }
+            catch (Exception e)
+            {
+                // Logged, not thrown: a fault here would vanish into Task.WhenAll
+                // while the announcer kept running.
+                Log.Error($"mdns: receive failed: {e.GetType().Name}: {e.Message}");
+                await Task.Delay(1000, ct);
                 continue;
             }
             if (r.PacketInformation.Interface != iface.Index)
+            {
+                Log.Debug($"mdns: ignored {r.ReceivedBytes} bytes from {r.RemoteEndPoint} on interface {r.PacketInformation.Interface}");
                 continue; // another interface's mDNS
+            }
             try
             {
                 Handle(buf.AsSpan(0, r.ReceivedBytes), (IPEndPoint)r.RemoteEndPoint);

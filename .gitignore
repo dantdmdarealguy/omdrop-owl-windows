@@ -1,0 +1,14 @@
+# Fetched at a pinned commit (pins); never committed.
+/upstream/
+# ESP-IDF build output and the generated config (sdkconfig.defaults is the source).
+/firmware/build/
+/firmware/build-*/
+/firmware/sdkconfig
+/firmware/sdkconfig.old
+/firmware/managed_components/
+# Spike captures.
+*.pcap
+__pycache__/
+.idea/
+# clangd index (CLion)
+.cache/

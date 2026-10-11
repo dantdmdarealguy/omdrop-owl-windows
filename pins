@@ -1,0 +1,8 @@
+# The upstream commits this project builds from or ports.
+#
+# OWL, from the airdrop-mt7921 fork: its -S channel-sequence strategies and
+# its fixes for iOS 26. patches/owl-*.patch apply to this commit. Phase 2
+# builds it for Windows (docs/PLAN.md).
+OWL_COMMIT=832d70f815c3d4a06a02117bf0fc5e868daa1ff0
+# omdrop-awdl 0.8.1: the AirDrop sender, mDNS and BLE tools that Phase 4 ports.
+OMDROP_AWDL_COMMIT=534f91a525337951ca19c311e53d333bd6d55100

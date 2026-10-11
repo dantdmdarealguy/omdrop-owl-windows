@@ -1,0 +1,10 @@
+menu "owl-radio"
+
+config OWL_RADIO_BAUD
+    int "Link baud rate on UART0"
+    default 3000000
+    help
+        The host must open the port at the same rate (spike.py --baud). 115200
+        lets a debug build share UART0 with the console.
+
+endmenu

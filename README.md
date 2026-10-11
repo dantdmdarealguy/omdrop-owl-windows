@@ -86,7 +86,7 @@ OWL ignores peers weaker than −65 dBm; `-f` turns that off.
 
 ```powershell
 ~\.dotnet\dotnet build windows\omdrop -c Release   # .NET 8 SDK
-toolsirdrop-test.ps1                               # owl.exe (elevated) + omdrop.exe receive
+tools\airdrop-test.ps1                               # owl.exe (elevated) + omdrop.exe receive
 ```
 
 `omdrop.exe receive` announces this PC on awdl0 (mDNS) and accepts everything

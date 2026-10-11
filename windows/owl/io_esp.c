@@ -581,6 +581,7 @@ static struct {
 	WINTUN_RELEASE_RECEIVE_PACKET_FUNC *ReleaseReceivePacket;
 	WINTUN_ALLOCATE_SEND_PACKET_FUNC *AllocateSendPacket;
 	WINTUN_SEND_PACKET_FUNC *SendPacket;
+	WINTUN_SET_LOGGER_FUNC *SetLogger;
 
 	WINTUN_ADAPTER_HANDLE adapter;
 	WINTUN_SESSION_HANDLE session;
@@ -605,6 +606,19 @@ static struct {
 	int nreplies;
 } tun;
 
+static void CALLBACK wintun_log(WINTUN_LOGGER_LEVEL level, DWORD64 timestamp, LPCWSTR message)
+{
+	char msg[512];
+	(void) timestamp;
+	WideCharToMultiByte(CP_UTF8, 0, message, -1, msg, sizeof msg, NULL, NULL);
+	if (level == WINTUN_LOG_ERR)
+		log_error("wintun: %s", msg);
+	else if (level == WINTUN_LOG_WARN)
+		log_warn("wintun: %s", msg);
+	else
+		log_info("wintun: %s", msg);
+}
+
 static int wintun_load(void)
 {
 	tun.dll = LoadLibraryExW(L"wintun.dll", NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -615,11 +629,12 @@ static int wintun_load(void)
 #define LOAD(name) ((tun.name = (void *) GetProcAddress(tun.dll, "Wintun" #name)) != NULL)
 	if (!LOAD(CreateAdapter) || !LOAD(CloseAdapter) || !LOAD(GetAdapterLUID) || !LOAD(StartSession) ||
 	    !LOAD(EndSession) || !LOAD(GetReadWaitEvent) || !LOAD(ReceivePacket) || !LOAD(ReleaseReceivePacket) ||
-	    !LOAD(AllocateSendPacket) || !LOAD(SendPacket)) {
+	    !LOAD(AllocateSendPacket) || !LOAD(SendPacket) || !LOAD(SetLogger)) {
 		log_error("awdl0: wintun.dll is missing functions; wrong version?");
 		return -ENOENT;
 	}
 #undef LOAD
+	tun.SetLogger(wintun_log);
 	return 0;
 }
 
@@ -688,6 +703,16 @@ static int host_open(struct io_state *state, const char *name)
 	NET_IFINDEX index = 0;
 	ConvertInterfaceLuidToIndex(&tun.luid, &index);
 	state->host_ifindex = (int) index;
+	{
+		WCHAR walias[NDIS_IF_MAX_STRING_SIZE + 1] = L"";
+		char alias[3 * NDIS_IF_MAX_STRING_SIZE + 1] = "";
+		ConvertInterfaceLuidToAlias(&tun.luid, walias, NDIS_IF_MAX_STRING_SIZE + 1);
+		WideCharToMultiByte(CP_UTF8, 0, walias, -1, alias, sizeof alias, NULL, NULL);
+		log_info("awdl0: Wintun adapter \"%s\", interface index %lu", alias, (unsigned long) index);
+		if (strcmp(alias, name))
+			log_warn("awdl0: Windows named the adapter \"%s\", not \"%s\"; use index %lu as its scope",
+			         alias, name, (unsigned long) index);
+	}
 	adapter_configure();
 
 	tun.session = tun.StartSession(tun.adapter, 0x400000);
@@ -994,6 +1019,7 @@ int io_state_init(struct io_state *state, const char *wlan, const char *host, co
 void io_state_free(struct io_state *state)
 {
 	(void) state;
+	log_info("shutting down: removing awdl0, closing the radio");
 	host_close();
 	InterlockedExchange(&radio.stop, 1);
 	if (radio.com && radio.com != INVALID_HANDLE_VALUE) {

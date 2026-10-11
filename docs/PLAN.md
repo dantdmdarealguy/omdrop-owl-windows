@@ -131,7 +131,14 @@ compile upstream `src/*.c` and `daemon/owl.c` together with Windows files:
 - Runs as `owl.exe -i esp:auto -c <6|44|149> -N -F -E -S pin -v`, the exclusive-mode flags
   from `omdrop-discoverable`.
 
-### Phase 2 progress
+### Phase 2 progress: done on the ESP32-S3
+
+**Result:** `ping` from Windows to an iPhone over awdl0: 33 of 40 replies, sustained, 9 ms at
+best. Latency is a sawtooth (each reply ~40 ms slower than the last, then a timeout): the phone
+visits channel 6 in one slot per 1024 TU period (sequence `149,149,149,0,0,0,0,0,6,0,149,...`)
+and ping's 1 s interval beats against the 1.05 s period. Frames reach OWL 0.6-0.9 ms after the
+ESP hears them; no drops, no TX errors. The ESP32-C5 on channel 149 is the fix for the rest.
+
 
 - `owl.exe` builds with MinGW from upstream `src/`, `core.c` and `owl.c` unchanged. Instead
   of rewriting `core.c` for a Windows loop, `compat/ev.h` + `ev_win.c` give it the slice of

@@ -10,19 +10,18 @@ moves the radio onto a USB-attached ESP32, which receives in promiscuous mode
 and sends raw 802.11 frames. OWL runs on Windows against it, and the AirDrop
 layer is rewritten natively. Your PC's own Wi-Fi is never touched.
 
-> **Status: early. Phase 2, OWL on Windows, runs.** Nothing here does AirDrop
-> yet. The ESP32-S3 passed every Phase 0 test (it receives AWDL, injects
-> frames, ACKs an iPhone's unicast while unassociated, and answers the host in
-> 0.3 ms), and `owl.exe` now runs AWDL through it: it finds Apple devices
-> nearby, elects one as sync master and pins channel 6. Next: awdl0 with a
-> phone on the other end. See
+> **Status: early. Phase 2, OWL on Windows, works.** Nothing here does AirDrop
+> yet, but the network under it does: Windows pings an iPhone over AWDL, through
+> `owl.exe` and an ESP32-S3 (33 of 40 replies). On channel 6 the phone is
+> reachable one slot in sixteen, so replies take up to ~1.8 s; the ESP32-C5 on
+> channel 149 is the fix. Next: the AirDrop service itself. See
 > [docs/PLAN.md](docs/PLAN.md) for the full plan, and what could still stop it.
 
 ## Hardware
 
 | Board | Bands | AWDL channels | Status |
 |---|---|---|---|
-| ESP32-S3 (DevKitC-1, N16R8) | 2.4 GHz | 6 | ✅ Phase 0 passed: RX, TX, ACK, link |
+| ESP32-S3 (DevKitC-1, N16R8) | 2.4 GHz | 6 | ✅ AWDL with an iPhone: IPv6 ping over awdl0 |
 | ESP32-C5 (Waveshare dev board) | 2.4 + 5 GHz | 6, 44, 149 | ⏳ Planned. iPhones spend far more AWDL time on 44 and 149 |
 
 On channel 6 only, expect slow transfers: an Intel AX201 on Linux took

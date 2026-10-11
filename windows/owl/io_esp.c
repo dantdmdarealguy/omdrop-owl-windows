@@ -663,6 +663,8 @@ static void CALLBACK wintun_log(WINTUN_LOGGER_LEVEL level, DWORD64 timestamp, LP
 		log_info("wintun: %s", msg);
 }
 
+static void pktlog(const char *dir, const uint8_t *ip, int len);
+
 static int wintun_load(void)
 {
 	tun.dll = LoadLibraryExW(L"wintun.dll", NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -883,8 +885,40 @@ static void answer_solicitation(const uint8_t *eth)
 	icmp[2] = sum >> 8;
 	icmp[3] = sum & 0xff;
 
+	pktlog("out", ip, 40 + 32);
 	tun.replies[tun.nreplies++].len = 14 + 40 + 32;
 	SetEvent(tun.ready);
+}
+
+/* OWL_PKTLOG=1: a line per IPv6 packet over awdl0, for seeing what AirDrop
+ * does on the wire (who opens what, which side goes quiet). */
+static void pktlog(const char *dir, const uint8_t *ip, int len)
+{
+	static int enabled = -1;
+	if (enabled < 0) {
+		const char *e = getenv("OWL_PKTLOG");
+		enabled = e && *e && *e != '0';
+	}
+	if (!enabled || len < 40)
+		return;
+	char src[INET6_ADDRSTRLEN], dst[INET6_ADDRSTRLEN], what[96] = "";
+	inet_ntop(AF_INET6, ip + 8, src, sizeof src);
+	inet_ntop(AF_INET6, ip + 24, dst, sizeof dst);
+	const uint8_t *l4 = ip + 40;
+	int l4len = len - 40, nh = ip[6];
+	if (nh == 6 && l4len >= 20) {
+		int off = (l4[12] >> 4) * 4, f = l4[13];
+		snprintf(what, sizeof what, "TCP %d > %d %s%s%s%s%s len %d", l4[0] << 8 | l4[1], l4[2] << 8 | l4[3],
+		         f & 0x02 ? "S" : "", f & 0x10 ? "." : "", f & 0x08 ? "P" : "", f & 0x01 ? "F" : "",
+		         f & 0x04 ? "R" : "", l4len - off);
+	} else if (nh == 17 && l4len >= 8) {
+		snprintf(what, sizeof what, "UDP %d > %d len %d", l4[0] << 8 | l4[1], l4[2] << 8 | l4[3], l4len - 8);
+	} else if (nh == 58 && l4len >= 1) {
+		snprintf(what, sizeof what, "ICMPv6 type %d", l4[0]);
+	} else {
+		snprintf(what, sizeof what, "next header %d len %d", nh, l4len);
+	}
+	log_info("pkt %s %s > %s %s", dir, src, dst, what);
 }
 
 /* From a peer, through OWL, to Windows. */
@@ -907,6 +941,8 @@ int host_send(const struct io_state *state, const uint8_t *buf, int len)
 		if (!unspecified)
 			host_neighbor_set((const struct in6_addr *) (ip + 8), (const struct ether_addr *) (buf + 6));
 	}
+
+	pktlog("in ", ip, iplen);
 
 	/* ICMPv6 neighbour solicitation (no extension headers) for our address. */
 	if (ip[6] == 58 && iplen >= 40 + 24 && ip[40] == 135 && !memcmp(ip + 48, &tun.self_ll, 16)) {
@@ -942,6 +978,7 @@ static int ip6_to_ether(const BYTE *pkt, DWORD size, uint8_t *out, int cap)
 	out[12] = 0x86;
 	out[13] = 0xdd;
 	memcpy(out + 14, pkt, size);
+	pktlog("out", pkt, (int) size);
 	return (int) size + 14;
 }
 

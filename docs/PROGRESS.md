@@ -28,6 +28,11 @@ maybe gzip; extract).
       entry skipped). Found: on Windows, MulticastLoopback=false stops a socket *receiving*
       multicast sent from this machine.
 - [ ] Test: the iPhone lists the PC in its AirDrop sheet; then a photo arrives
+  - Run 1 (2026-10-11): not listed. The phone found our service (asked for our host's AAAA
+    ~20 times in 2 min) but never POSTed /Discover; OWL carried ~2,300 unicast frames out and
+    ~3,700 in. Suspect: TLS handshake failing, which Kestrel logs only at Debug.
+  - Now: `tools/airdrop-test.ps1` runs both with OWL_PKTLOG (a line per IPv6 packet over
+    awdl0) and omdrop -v (each TCP connection, Kestrel's TLS debug). Next run tells which.
 - [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
 
 ## Next

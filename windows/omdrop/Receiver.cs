@@ -36,7 +36,11 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         if (opt.Verbose)
+        {
+            // Kestrel says why a TLS handshake failed only at Debug.
             builder.Logging.AddSimpleConsole().SetMinimumLevel(LogLevel.Information);
+            builder.Logging.AddFilter("Microsoft.AspNetCore.Server.Kestrel", LogLevel.Debug);
+        }
         builder.WebHost.ConfigureKestrel(k =>
         {
             k.AllowSynchronousIO = true; // the cpio extractor reads the body as a plain stream
@@ -45,6 +49,20 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
             k.Listen(new IPAddress(iface.LinkLocal.GetAddressBytes(), iface.Index), opt.Port, listen =>
             {
                 listen.Protocols = HttpProtocols.Http1;
+                // Before TLS: every TCP connection, and how long it lasted.
+                listen.Use(next => async conn =>
+                {
+                    var sw = Stopwatch.StartNew();
+                    Log.Info($"connection from {conn.RemoteEndPoint}");
+                    try
+                    {
+                        await next(conn);
+                    }
+                    finally
+                    {
+                        Log.Info($"connection from {conn.RemoteEndPoint} closed after {sw.Elapsed.TotalSeconds:F1} s");
+                    }
+                });
                 listen.UseHttps(new HttpsConnectionAdapterOptions
                 {
                     ServerCertificate = cert,

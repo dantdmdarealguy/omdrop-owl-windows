@@ -10,17 +10,17 @@ moves the radio onto a USB-attached ESP32, which receives in promiscuous mode
 and sends raw 802.11 frames. OWL runs on Windows against it, and the AirDrop
 layer is rewritten natively. Your PC's own Wi-Fi is never touched.
 
-> **Status: early. Phase 0, the feasibility spike, is under way.** Nothing here
-> does AirDrop yet. So far the ESP32-S3 captures real AWDL traffic from nearby
-> iPhones and injects raw frames, with a 0.3 ms serial round trip. The one open
-> question is whether it ACKs a peer's unicast while unassociated. See
+> **Status: early. Phase 0, the feasibility spike, passed.** Nothing here
+> does AirDrop yet. The ESP32-S3 passes every spike test: it captures real AWDL
+> traffic from nearby iPhones, injects raw frames, ACKs an iPhone's unicast
+> while unassociated, and answers the host in 0.3 ms. Next: OWL on Windows. See
 > [docs/PLAN.md](docs/PLAN.md) for the full plan, and what could still stop it.
 
 ## Hardware
 
 | Board | Bands | AWDL channels | Status |
 |---|---|---|---|
-| ESP32-S3 (DevKitC-1, N16R8) | 2.4 GHz | 6 | 🔬 Phase 0: RX ✅ TX ✅ ACK ⏳ |
+| ESP32-S3 (DevKitC-1, N16R8) | 2.4 GHz | 6 | ✅ Phase 0 passed: RX, TX, ACK, link |
 | ESP32-C5 (Waveshare dev board) | 2.4 + 5 GHz | 6, 44, 149 | ⏳ Planned. iPhones spend far more AWDL time on 44 and 149 |
 
 On channel 6 only, expect slow transfers: an Intel AX201 on Linux took
@@ -47,7 +47,7 @@ idf.py set-target esp32s3
 idf.py -p COM9 build flash
 cd ..\tools\spike
 python spike.py -p COM9 hello
-python spike.py -p COM9 ack-test       # does the ESP32 ACK while unassociated?
+python spike.py -p COM9 ack-test       # does the ESP32 ACK while unassociated? (turn on a phone hotspot)
 python spike.py -p COM9 capture -s 60  # open AirDrop on an iPhone nearby; open awdl.pcap in Wireshark
 python spike.py -p COM9 link
 python spike.py -p COM9 unicast       # our unicast ACKed? (--dst another ESP32's MAC)

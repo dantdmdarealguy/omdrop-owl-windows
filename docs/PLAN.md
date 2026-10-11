@@ -83,13 +83,16 @@ A minimal ESP-IDF sketch in `firmware/` plus a Python host script in `tools/spik
 
 Stop and re-plan if test 3 fails.
 
-### Phase 0 results so far (ESP32-S3 over the CH343 UART at 3 Mbit/s)
+### Phase 0 results (ESP32-S3 over the CH343 UART at 3 Mbit/s): go
+
+All four tests pass. The rest of the risk is AWDL-level: whether an iPhone syncs with
+OWL's frames through the ESP's timing, which Phase 2 shows.
 
 | Test | Result |
 |---|---|
 | 1. RX | ✅ Two Apple devices' AWDL PSF/MIF action frames, and their mDNS data frames on AWDL's BSSID, captured on channel 6; the pcap parses (radiotap, Apple OUI, AWDL type 8). |
 | 2. TX | ✅ for raw frames: `esp_wifi_80211_tx` sends data and management frames, **from any source MAC**, and reports per-frame ACK status that is real (an AP: 39 of 40 ACKed; a MAC nobody has: 0 of 38). Whether an iPhone accepts our AWDL frames waits for OWL (Phase 2). |
-| 3. ACK | ⏳ Inconclusive. The campus APs here don't retransmit probe responses even when nobody ACKs, so `ack-test` can't tell. Next: `spike.py unicast --dst <S3 MAC>` from the ESP32-C5 (definitive), or `ack-test` against a phone hotspot. ESP-NOW, which relies on the same hardware ACK while unassociated, suggests it will pass. |
+| 3. ACK | ✅ **Pass, against an iPhone's Personal Hotspot.** Probe responses to the ESP's MAC: 40, with 1 retry (2%). To a MAC nobody owns: 118 for 40 probes, 79 of them retries (67%). The ESP32 ACKs unicast to its MAC while unassociated, and promiscuous mode does deliver retransmissions, so the test can see a failure. (Campus APs were useless here: they don't retransmit probe responses at all.) |
 | 4. Link | Round trip 0.3 ms median, 0.4 ms p99. TX 141 frames/s (196 kB/s) with one frame in flight at a time; the serial line is the limit (1.4 kB is 4.7 ms at 3 Mbit/s). Phase 1: pipeline TX, and move to native USB. |
 
 Fixed along the way: with the console on USB-Serial-JTAG, UART0's pins must be routed

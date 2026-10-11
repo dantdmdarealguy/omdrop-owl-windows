@@ -47,7 +47,7 @@ maybe gzip; extract).
   - [x] mDNS browse on awdl0 (Browser.cs), HTTP client over SslStream (Http.cs), cpio writer,
         /Discover /Ask /Upload (Sender.cs, as OpenDrop's client).
   - [x] Local loop: send to our own receiver on VMnet1 (`--include-self --no-ble`): identical.
-  - [ ] Live: `toolsirdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
+  - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
         advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 
 ## Next

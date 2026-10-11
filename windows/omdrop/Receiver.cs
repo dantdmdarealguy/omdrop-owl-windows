@@ -75,7 +75,8 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
                 var input = new HttpInput(tls);
                 while (HttpRequest.Read(input) is { } req)
                 {
-                    Log.Debug($"{remote}: {req.Method} {req.Path}");
+                    Log.Debug($"{remote}: {req.Method} {req.Path} | " +
+                              string.Join(" | ", req.Headers.Select(h => $"{h.Key}: {h.Value}")));
                     if (req.Header("expect")?.Equals("100-continue", StringComparison.OrdinalIgnoreCase) == true)
                         HttpResponse.Continue(tls);
                     bool close = Handle(req, tls, remote);
@@ -149,7 +150,8 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
                 if (ask.GetValueOrDefault("Items") is List<object?> items && items.Count > 0)
                     files += (files.Length > 0 ? ", " : "") + string.Join(", ", items.OfType<string>());
                 if (Log.Verbose)
-                    Log.Debug($"ask keys: {string.Join(", ", ask.Keys)}");
+                    foreach (var (k, v) in ask)
+                        Log.Debug($"ask {k} = {Describe(k, v)}");
             }
         }
         catch (FormatException e)
@@ -202,6 +204,20 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         body.CopyTo(ms);
         return ms.ToArray();
     }
+
+    /// A plist value for the log: whole when it's small and says nothing about
+    /// anyone; type and size for identities, records and icons.
+    static string Describe(string key, object? v) => v switch
+    {
+        _ when key is "SenderRecordData" or "SenderIdentityAuthTag" or "FileIcon" =>
+            $"<{v?.GetType().Name} of {(v is byte[] b ? b.Length : v?.ToString()?.Length ?? 0)}>",
+        byte[] b => b.Length <= 32 ? $"<{b.Length} bytes {Convert.ToHexString(b)}>" : $"<{b.Length} bytes>",
+        string s => $"\"{s}\"",
+        Dictionary<string, object?> d => "{" + string.Join(", ", d.Select(kv => $"{kv.Key}: {Describe(kv.Key, kv.Value)}")) + "}",
+        List<object?> l => "[" + string.Join(", ", l.Select(x => Describe("", x))) + "]",
+        null => "null",
+        _ => $"{v} ({v.GetType().Name})",
+    };
 
     static string Describe(byte[] body)
     {

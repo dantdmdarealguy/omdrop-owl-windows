@@ -65,6 +65,11 @@ maybe gzip; extract).
         attempt. (The 266-byte record before it is a TLS 1.3 session ticket, not a reply.)
         Apple's senders and OpenDrop's receiver use Transfer-Encoding: chunked for /Upload;
         we sent a Content-Length. Now chunked, and on the /Ask connection unless it's closed.
+  - [ ] Live run 5: still closed on our /Upload headers. The iPhone's own /Ask (as a sender)
+        has keys ours lacks: TransferID, TransferType, Items, FileIcon, SenderIdentityAuthTag.
+        Suspect TransferID ties /Ask to /Upload. The receiver now logs every request header
+        and each /Ask value (records, auth tags and icons by size only): next, one receive
+        run (phone -> PC) to capture them, then mirror them in send.
   - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
         advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 

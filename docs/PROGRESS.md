@@ -27,7 +27,7 @@ maybe gzip; extract).
       host-only adapter (mDNS answer, /Discover, /Ask, chunked gzip cpio /Upload, traversal
       entry skipped). Found: on Windows, MulticastLoopback=false stops a socket *receiving*
       multicast sent from this machine.
-- [ ] Test: the iPhone lists the PC in its AirDrop sheet; then a photo arrives
+- [x] Test: the iPhone lists the PC in its AirDrop sheet; then a photo arrives
   - Run 1 (2026-10-11): not listed. The phone found our service (asked for our host's AAAA
     ~20 times in 2 min) but never POSTed /Discover; OWL carried ~2,300 unicast frames out and
     ~3,700 in. Suspect: TLS handshake failing, which Kestrel logs only at Debug.
@@ -39,7 +39,8 @@ maybe gzip; extract).
     to send: IMG_2760.jpg"), but /Upload came as `application/x-dvzip` (iOS 26), which was
     refused. Added DvZip.cs (format per WinDrop: BE u32 per block, bit 31 = stored, else
     zlib; cpio inside); the local test covers it.
-  - Next: run 4 with the same script.
+  - Run 4 (2026-10-11): **two photos received** from the iPhone, 214 kB each, 1.5 s and 2.9 s
+    (~150 and ~73 kB/s), intact; the second saved as "IMG_2760 (1).jpg".
 - [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
 
 ## Next

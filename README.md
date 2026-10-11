@@ -10,10 +10,12 @@ moves the radio onto a USB-attached ESP32, which receives in promiscuous mode
 and sends raw 802.11 frames. OWL runs on Windows against it, and the AirDrop
 layer is rewritten natively. Your PC's own Wi-Fi is never touched.
 
-> **Status: early. Phase 0, the feasibility spike, passed.** Nothing here
-> does AirDrop yet. The ESP32-S3 passes every spike test: it captures real AWDL
-> traffic from nearby iPhones, injects raw frames, ACKs an iPhone's unicast
-> while unassociated, and answers the host in 0.3 ms. Next: OWL on Windows. See
+> **Status: early. Phase 2, OWL on Windows, runs.** Nothing here does AirDrop
+> yet. The ESP32-S3 passed every Phase 0 test (it receives AWDL, injects
+> frames, ACKs an iPhone's unicast while unassociated, and answers the host in
+> 0.3 ms), and `owl.exe` now runs AWDL through it: it finds Apple devices
+> nearby, elects one as sync master and pins channel 6. Next: awdl0 with a
+> phone on the other end. See
 > [docs/PLAN.md](docs/PLAN.md) for the full plan, and what could still stop it.
 
 ## Hardware
@@ -30,6 +32,7 @@ On channel 6 only, expect slow transfers: an Intel AX201 on Linux took
 
 ```
 firmware/      owl-radio, the ESP-IDF firmware (promiscuous RX, raw TX, serial protocol)
+windows/owl/   OWL for Windows: the ESP32 as its radio, Wintun as awdl0, a libev shim
 tools/spike/   Phase 0 host tests: capture to pcap, ACK test, link speed
 patches/       patches to OWL from omdrop-owl (-F fixed radio, -S pin, -E, -R, -m)
 pins           the upstream commits this builds from
@@ -54,6 +57,30 @@ python spike.py -p COM9 unicast       # our unicast ACKed? (--dst another ESP32'
 ```
 
 `just` runs the same steps (`just --list`).
+
+## Phase 2: OWL on Windows
+
+`tools/build-owl.ps1` fetches OWL at the pinned commit, applies `patches/`,
+downloads Wintun (checksum-verified) and builds `windows/owl/build/owl.exe`
+with MinGW GCC, CMake and Ninja. Upstream's protocol code, `core.c` and `owl.c`
+build unchanged. The radio, `awdl0` and the event loop are replaced:
+
+- `io_esp.c`: the ESP32 over serial, standing in for a monitor interface with
+  injection. It also makes `awdl0` a Wintun adapter, translating between
+  OWL's Ethernet frames and Wintun's IPv6 packets, and answering neighbour
+  solicitations as a kernel would.
+- `ev_win.c`: the part of libev OWL uses, over Windows wait handles, with
+  high-resolution timers.
+- `netutils_win.c`, `compat/`: the rest of what POSIX gave OWL.
+
+```powershell
+tools\build-owl.ps1
+# from an administrator terminal (creating awdl0 needs it):
+windows\owl\build\owl.exe -i COM9 -c 6 -N -F -E -S pin -v
+# without awdl0, no admin needed: add -h ""
+```
+
+OWL ignores peers weaker than −65 dBm; `-f` turns that off.
 
 ## Credits
 

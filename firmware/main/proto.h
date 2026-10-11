@@ -9,7 +9,7 @@
  */
 #pragma once
 
-#define PROTO_VERSION 1
+#define PROTO_VERSION 2
 #define PROTO_MAX_FRAME 1600 /* largest 802.11 frame either way */
 
 /* Host to radio. Each is answered by MSG_ACK unless noted. */
@@ -18,7 +18,7 @@ enum {
 	MSG_SET_CHANNEL = 0x02, /* ch:u8 */
 	MSG_SET_MAC = 0x03,     /* mac:6 */
 	MSG_SET_FILTER = 0x04,  /* mode:u8 (FILTER_*) */
-	MSG_TX = 0x05,          /* rate:u8 (wifi_phy_rate_t) count:u8 gap_ms:u16 frame... (no FCS) */
+	MSG_TX = 0x05,          /* rate:u8 (RATE_*) count:u8 gap_ms:u16 frame... (no FCS) */
 	MSG_TIME = 0x06,        /* -> MSG_TIME_RESP */
 	MSG_STATS = 0x07,       /* -> MSG_STATS_RESP */
 };
@@ -33,6 +33,12 @@ enum {
 	MSG_RX = 0x90,         /* ts:u32 rssi:i8 ch:u8 rate:u8 sig_mode:u8 mcs:u8 cwb:u8 frame... (no FCS) */
 	MSG_LOG = 0x91,        /* text */
 };
+
+/* MSG_TX's rate, the same on every chip (wifi_phy_rate_t isn't: its MCS
+ * short-GI values move on chips with 802.11ax). Legacy rates are in radiotap's
+ * 500 kbit/s units (2 = 1 Mbit/s, 12 = 6, 108 = 54); HT is RATE_MCS. */
+#define RATE_MCS 0x80
+#define RATE_MCS_SGI 0x10 /* with RATE_MCS; the low nibble is the MCS index */
 
 enum {
 	FILTER_AWDL = 0, /* AWDL action frames, and data frames on AWDL's BSSID or to us */

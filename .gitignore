@@ -12,3 +12,5 @@ __pycache__/
 .idea/
 # clangd index (CLion)
 .cache/
+# owl.exe build output.
+/windows/owl/build/

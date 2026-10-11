@@ -148,15 +148,44 @@ static esp_err_t set_mac(const uint8_t *mac)
 	return err;
 }
 
+/* proto.h's portable rate to this chip's wifi_phy_rate_t; -1 if unknown. */
+static int phy_rate(uint8_t r)
+{
+	if (r & RATE_MCS) {
+		int mcs = r & 0x0f;
+		if (mcs > 7)
+			return -1;
+		return (r & RATE_MCS_SGI ? WIFI_PHY_RATE_MCS0_SGI : WIFI_PHY_RATE_MCS0_LGI) + mcs;
+	}
+	switch (r) {
+	case 2: return WIFI_PHY_RATE_1M_L;
+	case 4: return WIFI_PHY_RATE_2M_L;
+	case 11: return WIFI_PHY_RATE_5M_L;
+	case 22: return WIFI_PHY_RATE_11M_L;
+	case 12: return WIFI_PHY_RATE_6M;
+	case 18: return WIFI_PHY_RATE_9M;
+	case 24: return WIFI_PHY_RATE_12M;
+	case 36: return WIFI_PHY_RATE_18M;
+	case 48: return WIFI_PHY_RATE_24M;
+	case 72: return WIFI_PHY_RATE_36M;
+	case 96: return WIFI_PHY_RATE_48M;
+	case 108: return WIFI_PHY_RATE_54M;
+	}
+	return -1;
+}
+
 static esp_err_t tx(const uint8_t *body, size_t len)
 {
 	if (len < 4 + 24)
 		return ESP_ERR_INVALID_SIZE;
-	uint8_t rate = body[0], count = body[1] ? body[1] : 1;
+	int rate = phy_rate(body[0]);
+	uint8_t count = body[1] ? body[1] : 1;
 	uint16_t gap_ms = body[2] | body[3] << 8;
 	const uint8_t *frame = body + 4;
 	static int cur_rate = -1; /* reconfiguring costs milliseconds; only on change */
 	esp_err_t err = ESP_OK;
+	if (rate < 0)
+		return ESP_ERR_INVALID_ARG;
 	if (rate != cur_rate) {
 		err = esp_wifi_config_80211_tx_rate(WIFI_IF_STA, (wifi_phy_rate_t)rate);
 		cur_rate = err == ESP_OK ? rate : -1;

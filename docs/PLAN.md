@@ -131,6 +131,19 @@ compile upstream `src/*.c` and `daemon/owl.c` together with Windows files:
 - Runs as `owl.exe -i esp:auto -c <6|44|149> -N -F -E -S pin -v`, the exclusive-mode flags
   from `omdrop-discoverable`.
 
+### Phase 2 progress
+
+- `owl.exe` builds with MinGW from upstream `src/`, `core.c` and `owl.c` unchanged. Instead
+  of rewriting `core.c` for a Windows loop, `compat/ev.h` + `ev_win.c` give it the slice of
+  libev it uses (timers, io watchers over wait handles, fed events), and `compat/pcap/pcap.h`
+  the slice of libpcap (`pcap_dispatch` from the ESP's queue, and dump files for `-d`).
+- The serial protocol's TX rate is now chip-independent (protocol 2): `wifi_phy_rate_t`'s
+  MCS short-GI values differ between the S3 and the C5.
+- ✅ Without awdl0 (`-h ""`): OWL sends PSF/MIF through the ESP (~24 a second), adds a
+  nearby Apple device as a peer, elects it sync master and pins channel 6.
+- ⏳ With awdl0 (Wintun, needs admin): an iPhone's AirDrop sheet, `add peer` with the phone
+  at close range, and IPv6 traffic over awdl0.
+
 ## Phase 3: radio helper → `OmdropOwl` Windows service (.NET 8, runs as SYSTEM)
 
 It keeps **the same contract** as `omdrop-discoverable`: `start <s>`, `stop`, `status --json`,

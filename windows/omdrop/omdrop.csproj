@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- omdrop.exe: the AirDrop side of omdrop-owl-windows. It runs over awdl0,
+       which owl.exe (windows/owl) brings up: mDNS on awdl0 so Apple devices see
+       us, and the HTTPS receiver they send to. Protocol as in OpenDrop. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>omdrop</AssemblyName>
+    <RootNamespace>Omdrop</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

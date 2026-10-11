@@ -17,12 +17,13 @@ fe80::; HTTPS (self-signed RSA 2048, client certs accepted unverified); POST /Di
 ReceiverMediaCapabilities `{"Version":1}`), /Upload (chunked, application/x-cpio,
 maybe gzip; extract).
 
-- [ ] .NET 8 SDK (installed per-user to `%USERPROFILE%\.dotnet`, no admin)
-- [ ] Project skeleton, finds awdl0 (name, index, fe80:: address), waits for it
-- [ ] Binary plist reader/writer
-- [ ] mDNS responder + unsolicited announcements on awdl0
-- [ ] HTTPS server: /Discover, /Ask, /Upload (cpio odc/newc, gzip), safe extraction
-- [ ] Firewall rule (link-local only) when run elevated
+- [x] .NET 8 SDK (installed per-user to `%USERPROFILE%\.dotnet`, no admin; build with `~/.dotnet/dotnet build windows/omdrop`)
+- [x] Project skeleton, finds awdl0 (name, index, fe80:: address), waits for it
+- [x] Binary plist reader/writer (Plist.cs)
+- [x] mDNS responder + unsolicited announcements on awdl0 (Mdns.cs; untested)
+- [x] HTTPS server: /Discover, /Ask, /Upload (cpio odc/newc, gzip), safe extraction (Receiver.cs, Cpio.cs; untested)
+- [x] Firewall rule (link-local only) when run elevated, else prints the netsh lines
+- [ ] Local test against another interface (tools/test/receiver_test.py)
 - [ ] Test: the iPhone lists the PC in its AirDrop sheet; then a photo arrives
 - [ ] Sending (Phase 4b): BLE wake advert (WinRT), browse, /Discover /Ask /Upload as client
 

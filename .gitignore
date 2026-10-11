@@ -14,3 +14,6 @@ __pycache__/
 .cache/
 # owl.exe build output.
 /windows/owl/build/
+# .NET build output.
+bin/
+obj/

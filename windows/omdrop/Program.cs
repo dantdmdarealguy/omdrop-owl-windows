@@ -18,7 +18,7 @@ const string Usage = """
       --name     what Apple devices see us as (default: this computer's name)
       --save     where received files go (default: Downloads)
       --burst    announcement copies per round; 64 suits one channel-6 radio (default)
-      --to       send to the receiver whose name contains this (default: the first to answer)
+      --to       send only to the device with exactly this name (default: list devices, you pick)
       --no-ble   don't send the Bluetooth advert that wakes Apple devices
     """;
 

@@ -47,6 +47,10 @@ maybe gzip; extract).
   - [x] mDNS browse on awdl0 (Browser.cs), HTTP client over SslStream (Http.cs), cpio writer,
         /Discover /Ask /Upload (Sender.cs, as OpenDrop's client).
   - [x] Local loop: send to our own receiver on VMnet1 (`--include-self --no-ble`): identical.
+  - [x] Live run 1 (2026-10-11): the BLE advert works on air, and browse + /Discover found a
+        stranger's Mac, which the first version then sent an /Ask (file name only, cancelled
+        within a second). Fixed: `send` never picks a recipient itself. `--to` needs an exact
+        name; without it, devices are listed and the user picks a number. Tested locally.
   - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
         advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
 

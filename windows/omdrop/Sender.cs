@@ -27,35 +27,83 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
         Log.Info($"looking for {(opt.To != null ? $"\"{opt.To}\"" : "AirDrop receivers")} on {iface.Name} " +
                  $"for up to {opt.Timeout.TotalSeconds:F0} s; on an iPhone, set AirDrop to Everyone and keep it unlocked");
 
-        await foreach (var service in browser.BrowseAsync(deadline.Token))
+        // Never send to a device nobody chose: with --to, only an exact name match;
+        // without it, list what answers and let the user pick. /Discover is the only
+        // thing other devices see, and it's silent: what any open share sheet sends.
+        var found = new List<(AirDropService Service, string Name)>();
+        async Task Browse(Func<AirDropService, string, Task<bool>> onReceiver)
         {
-            Log.Info($"found {service.Instance} at [{service.Address}]:{service.Port}" +
-                     (service.Flags is { } f ? $", flags 0x{f:x}" : ""));
-            string? name;
-            try
+            await foreach (var service in browser.BrowseAsync(deadline.Token))
             {
-                name = await DiscoverAsync(service, ct);
+                Log.Debug($"found {service.Instance} at [{service.Address}]:{service.Port}" +
+                          (service.Flags is { } f ? $", flags 0x{f:x}" : ""));
+                string? name;
+                try
+                {
+                    name = await DiscoverAsync(service, ct);
+                }
+                catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or OperationCanceledException
+                                               or System.Security.Authentication.AuthenticationException or InvalidDataException)
+                {
+                    Log.Debug($"{service.Instance}: /Discover failed: {e.Message}");
+                    continue;
+                }
+                if (name != null && await onReceiver(service, name)) // null: Contacts Only, not us
+                    return;
             }
-            catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or OperationCanceledException
-                                           or System.Security.Authentication.AuthenticationException or InvalidDataException)
-            {
-                Log.Warn($"{service.Instance}: /Discover failed: {e.Message}");
-                continue;
-            }
-            if (name == null)
-            {
-                Log.Info($"{service.Instance}: not accepting from us (Contacts Only?)");
-                continue;
-            }
-            if (opt.To != null && !name.Contains(opt.To, StringComparison.OrdinalIgnoreCase))
-            {
-                Log.Info($"skipping \"{name}\"");
-                continue;
-            }
-            return await SendToAsync(service, name, files, ct) ? 0 : 1;
         }
-        Log.Error(opt.To != null ? $"no receiver called \"{opt.To}\" answered" : "no receiver answered");
-        return 1;
+
+        if (opt.To != null)
+        {
+            (AirDropService Service, string Name)? match = null;
+            await Browse((service, name) =>
+            {
+                if (!name.Equals(opt.To, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Info($"found \"{name}\" (not \"{opt.To}\")");
+                    return Task.FromResult(false);
+                }
+                match = (service, name);
+                return Task.FromResult(true);
+            });
+            if (match is not { } m)
+            {
+                Log.Error($"no device called \"{opt.To}\" answered");
+                return 1;
+            }
+            return await SendToAsync(m.Service, m.Name, files, ct) ? 0 : 1;
+        }
+
+        Console.WriteLine("Devices appear below as they answer. Type a number and Enter to send to it; Enter alone cancels.");
+        var listing = Browse((service, name) =>
+        {
+            lock (found)
+            {
+                found.Add((service, name));
+                Console.WriteLine($"  [{found.Count}] {name}");
+            }
+            return Task.FromResult(false);
+        });
+        var read = Task.Run(Console.ReadLine);
+        await Task.WhenAny(read, listing);
+        deadline.Cancel(); // stop browsing either way
+        if (!read.IsCompleted)
+        {
+            Log.Error(found.Count == 0 ? "no device answered" : "timed out waiting for a choice");
+            return 1;
+        }
+        var answer = read.Result?.Trim();
+        (AirDropService Service, string Name) chosen;
+        lock (found)
+        {
+            if (!int.TryParse(answer, out int n) || n < 1 || n > found.Count)
+            {
+                Log.Info("not sent");
+                return 1;
+            }
+            chosen = found[n - 1];
+        }
+        return await SendToAsync(chosen.Service, chosen.Name, files, ct) ? 0 : 1;
     }
 
     async Task<string?> DiscoverAsync(AirDropService service, CancellationToken ct)

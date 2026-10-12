@@ -41,7 +41,7 @@ maybe gzip; extract).
     zlib; cpio inside); the local test covers it.
   - Run 4 (2026-10-11): **two photos received** from the iPhone, 214 kB each, 1.5 s and 2.9 s
     (~150 and ~73 kB/s), intact; the second saved as "IMG_2760 (1).jpg".
-- [ ] Sending (Phase 4b): `omdrop send FILE [--to NAME]`
+- [x] Sending (Phase 4b): `omdrop send FILE [--to NAME]`
   - [x] BLE wake advert via WinRT (Ble.cs): Windows accepts Apple manufacturer data and
         reports Started (`omdrop ble`). iOS 26 shape by default, `--legacy-ble` for the old.
   - [x] mDNS browse on awdl0 (Browser.cs), HTTP client over SslStream (Http.cs), cpio writer,
@@ -75,10 +75,14 @@ maybe gzip; extract).
         `send` now sends TransferID (both places), TotalBytes, TransferType, Items, FileSize
         and ShouldConvertMediaFormats; not the pseudonym or push token (Apple ID), nor
         FileIcon (unless it proves needed). Loop-tested.
-  - [ ] Live run 6: `tools\airdrop-test.ps1 -Send photo.jpg -To "Vaibhav's iPhone"`.
+  - [x] Live run 6 (2026-10-12): **sent**. The iPhone accepted, and IMG_2760.jpg (215 kB,
+        DVZip) arrived in 11.5 s, ~19 kB/s. Slower than receiving (75-150 kB/s): on channel 6
+        we can transmit only in the phone's one channel-6 slot in sixteen.
 
 ## Next
-- ESP32-C5 (arrives Tuesday 2026-10-13): flash, run OWL on channel 149.
+- ESP32-C5 (arrives Tuesday 2026-10-13): flash, run OWL on channel 149; expect sending to
+  gain most (the phone spends most slots on 149).
+- Maybe: FileIcon (a thumbnail in /Ask) for a nicer prompt on the phone; Contacts Only.
 - Phase 3: Windows service + tray app; Phase 5: installer.
 
 ## How to run what exists

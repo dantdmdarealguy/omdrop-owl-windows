@@ -10,19 +10,19 @@ moves the radio onto a USB-attached ESP32, which receives in promiscuous mode
 and sends raw 802.11 frames. OWL runs on Windows against it, and the AirDrop
 layer is rewritten natively. Your PC's own Wi-Fi is never touched.
 
-> **Status: early, but an iPhone can AirDrop a photo to Windows.** With
-> `owl.exe` and an ESP32-S3 as the radio, `omdrop.exe receive` shows up in the
-> iPhone's AirDrop sheet and saves what it's sent to Downloads (a 214 kB photo:
-> 1.5 s, ~150 kB/s). Not yet: sending from Windows, a tray app, an installer,
-> and the ESP32-C5 for channel 149 (on channel 6 the phone is reachable one
-> slot in sixteen). See
+> **Status: early, but AirDrop works both ways between Windows and an iPhone.**
+> With `owl.exe` and an ESP32-S3 as the radio, `omdrop.exe receive` shows up in
+> the iPhone's AirDrop sheet and saves what it's sent to Downloads (a 214 kB
+> photo in 1.5-3 s), and `omdrop.exe send` sends to a device you name (the same
+> photo in 11.5 s). Not yet: a tray app, an installer, and the ESP32-C5 for
+> channel 149 (on channel 6 the phone is reachable one slot in sixteen). See
 > [docs/PLAN.md](docs/PLAN.md) for the full plan, and what could still stop it.
 
 ## Hardware
 
 | Board | Bands | AWDL channels | Status |
 |---|---|---|---|
-| ESP32-S3 (DevKitC-1, N16R8) | 2.4 GHz | 6 | ✅ Receives AirDrop from an iPhone (~150 kB/s) |
+| ESP32-S3 (DevKitC-1, N16R8) | 2.4 GHz | 6 | ✅ AirDrop with an iPhone: receive ~75-150 kB/s, send ~19 kB/s |
 | ESP32-C5 (Waveshare dev board) | 2.4 + 5 GHz | 6, 44, 149 | ⏳ Planned. iPhones spend far more AWDL time on 44 and 149 |
 
 On channel 6 only, expect slow transfers: an Intel AX201 on Linux took
@@ -92,6 +92,20 @@ tools\airdrop-test.ps1                               # owl.exe (elevated) + omdr
 `omdrop.exe receive` announces this PC on awdl0 (mDNS) and accepts everything
 sent in Everyone mode into Downloads. It speaks HTTP itself (Apple's sender
 sends no Host header) and unpacks both cpio and iOS 26's DVZip uploads.
+
+## Sending AirDrop
+
+```powershell
+tools\airdrop-test.ps1 -Send photo.jpg -To "Vaibhav's iPhone"
+# or, with owl.exe already running:
+windows\omdrop\bin\Release\omdrop.exe send photo.jpg --to "Vaibhav's iPhone"
+```
+
+`send` wakes nearby Apple devices with a Bluetooth LE AirDrop advert, finds
+them over mDNS on awdl0, and sends only to the device named exactly by `--to`;
+without `--to` it lists the devices that answer and you pick one. The other
+person accepts on their device. It sends as an iPhone does: a TransferID
+shared by /Ask and /Upload, and a chunked DVZip upload.
 
 ## Credits
 

@@ -15,17 +15,48 @@ public sealed record ReceiverOptions(
     int Port,
     bool Verbose);
 
+/// <summary>A file an Apple device offers in /Ask.</summary>
+public sealed record IncomingFile(string Name, string Type, long? Size);
+
+/// <summary>One offer: who, what, and the thumbnail they sent (JPEG or JPEG 2000).</summary>
+public sealed record IncomingTransfer(
+    string Id,
+    string SenderName,
+    string? SenderModel,
+    IReadOnlyList<IncomingFile> Files,
+    IReadOnlyList<string> Urls,
+    byte[]? Icon,
+    byte[]? SenderRecordData);
+
 /// <summary>
 /// The HTTPS side of an AirDrop receiver, on awdl0's address only.
-///   POST /Discover  who we are (binary plist)
-///   POST /Ask       a sender's offer; accepted, and logged
-///   POST /Upload    the files: chunked application/x-cpio, maybe gzipped
+///   POST /Discover  who we are (binary plist); empty for senders AllowSender refuses
+///   POST /Ask       a sender's offer: Decide says yes (200) or no (403)
+///   POST /Upload    the files: chunked cpio, gzipped or DVZip; named by TransferID
 /// HTTP is Http.cs's, not Kestrel's: Apple's sender sends no Host header.
 /// </summary>
 public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, ReceiverOptions opt)
 {
-    /// From the last /Ask, to say whose files arrived.
-    string lastSender = "?";
+    /// Whether to accept an offer; null accepts everything. Undecided after
+    /// AskTimeout counts as no, as on an Apple device.
+    public Func<IncomingTransfer, CancellationToken, Task<bool>>? Decide { get; set; }
+
+    /// Whether this sender may see and send to us at all (Contacts Only), from
+    /// its Apple-signed record (null: it sent none). Null allows everyone.
+    public Func<byte[]?, bool>? AllowSender { get; set; }
+
+    public TimeSpan AskTimeout { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// Bytes written so far, and the total the sender announced (if it did).
+    public event Action<IncomingTransfer, long, long?>? Progress;
+    public event Action<IncomingTransfer, IReadOnlyList<string>>? Completed;
+    public event Action<IncomingTransfer, string>? Failed;
+    /// URLs accepted (an /Ask with Items and no files; nothing is uploaded).
+    public event Action<IncomingTransfer>? LinksReceived;
+
+    /// Accepted offers awaiting their /Upload, by TransferID.
+    readonly Dictionary<string, IncomingTransfer> accepted = new();
+    IncomingTransfer? lastAccepted;
 
     public async Task RunAsync(CancellationToken ct)
     {
@@ -38,7 +69,7 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
             while (!ct.IsCancellationRequested)
             {
                 var client = await listener.AcceptTcpClientAsync(ct);
-                _ = Task.Run(() => Serve(client), CancellationToken.None);
+                _ = Task.Run(() => Serve(client, ct), CancellationToken.None);
             }
         }
         catch (OperationCanceledException)
@@ -49,11 +80,11 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         }
     }
 
-    void Serve(TcpClient client)
+    void Serve(TcpClient client, CancellationToken ct)
     {
         var remote = client.Client.RemoteEndPoint;
         var sw = Stopwatch.StartNew();
-        Log.Info($"connection from {remote}");
+        Log.Debug($"connection from {remote}");
         try
         {
             using (client)
@@ -79,7 +110,7 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
                               string.Join(" | ", req.Headers.Select(h => $"{h.Key}: {h.Value}")));
                     if (req.Header("expect")?.Equals("100-continue", StringComparison.OrdinalIgnoreCase) == true)
                         HttpResponse.Continue(tls);
-                    bool close = Handle(req, tls, remote);
+                    bool close = Handle(req, tls, remote, ct);
                     if (close || req.Header("connection")?.Equals("close", StringComparison.OrdinalIgnoreCase) == true)
                         break;
                 }
@@ -91,16 +122,23 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
             Log.Warn($"connection from {remote}: {e.GetType().Name}: {e.Message}" +
                      (e.InnerException is { } inner ? $" ({inner.GetType().Name}: {inner.Message})" : ""));
         }
-        Log.Info($"connection from {remote} closed after {sw.Elapsed.TotalSeconds:F1} s");
+        Log.Debug($"connection from {remote} closed after {sw.Elapsed.TotalSeconds:F1} s");
     }
 
     /// Answers one request; true when the connection should close after it.
-    bool Handle(HttpRequest req, Stream s, EndPoint? remote)
+    bool Handle(HttpRequest req, Stream s, EndPoint? remote, CancellationToken ct)
     {
         if (req.Method == "POST" && req.Path == "/Discover")
         {
             var body = ReadAll(req.Body);
-            Log.Info($"discover from {remote}{Describe(body)}");
+            var record = Field(body, "SenderRecordData") as byte[];
+            if (AllowSender != null && !AllowSender(record))
+            {
+                Log.Info($"discover from {remote}: not a contact; not answering with our name");
+                Reply(s, new Dictionary<string, object?>());
+                return false;
+            }
+            Log.Info($"discover from {remote}{(record != null ? " (with a sender record)" : "")}");
             Reply(s, new Dictionary<string, object?>
             {
                 ["ReceiverComputerName"] = opt.ComputerName,
@@ -111,12 +149,25 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         }
         if (req.Method == "POST" && req.Path == "/Ask")
         {
-            Ask(ReadAll(req.Body));
+            var offer = ParseAsk(ReadAll(req.Body));
+            bool yes = offer != null && (AllowSender?.Invoke(offer.SenderRecordData) ?? true) && Ask(offer, ct);
+            if (!yes)
+            {
+                HttpResponse.Write(s, 403);
+                return false;
+            }
+            lock (accepted)
+            {
+                accepted[offer!.Id] = offer;
+                lastAccepted = offer;
+            }
             Reply(s, new Dictionary<string, object?>
             {
                 ["ReceiverModelName"] = opt.ModelName,
                 ["ReceiverComputerName"] = opt.ComputerName,
             });
+            if (offer!.Files.Count == 0 && offer.Urls.Count > 0)
+                LinksReceived?.Invoke(offer);
             return false;
         }
         if (req.Method == "POST" && req.Path == "/Upload")
@@ -136,62 +187,135 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         return true;
     }
 
-    void Ask(byte[] body)
+    bool Ask(IncomingTransfer offer, CancellationToken ct)
     {
-        string from = "someone", files = "";
+        var what = string.Join(", ", offer.Files.Select(f => f.Name).Concat(offer.Urls));
+        if (Decide == null)
+        {
+            Log.Info($"{offer.SenderName} wants to send: {what}; accepted");
+            return true;
+        }
+        Log.Info($"{offer.SenderName} wants to send: {what}; asking");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(AskTimeout);
+        bool yes;
         try
         {
-            if (Plist.Read(body) is Dictionary<string, object?> ask)
-            {
-                from = ask.GetValueOrDefault("SenderComputerName") as string ?? from;
-                if (ask.GetValueOrDefault("Files") is List<object?> list)
-                    files = string.Join(", ", list.OfType<Dictionary<string, object?>>()
-                        .Select(f => f.GetValueOrDefault("FileName") as string ?? "?"));
-                if (ask.GetValueOrDefault("Items") is List<object?> items && items.Count > 0)
-                    files += (files.Length > 0 ? ", " : "") + string.Join(", ", items.OfType<string>());
-                if (Log.Verbose)
-                    foreach (var (k, v) in ask)
-                        Log.Debug($"ask {k} = {Describe(k, v)}");
-            }
+            yes = Decide(offer, timeout.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            yes = false;
+        }
+        Log.Info(yes ? "accepted" : "declined");
+        return yes;
+    }
+
+    static IncomingTransfer? ParseAsk(byte[] body)
+    {
+        Dictionary<string, object?> ask;
+        try
+        {
+            if (Plist.Read(body) is not Dictionary<string, object?> d)
+                return null;
+            ask = d;
         }
         catch (FormatException e)
         {
             Log.Warn($"ask: unreadable plist ({e.Message})");
+            return null;
         }
-        lastSender = from;
-        Log.Info($"{from} wants to send: {(files.Length > 0 ? files : "(no file names)")}; accepted");
+        if (Log.Verbose)
+            foreach (var (k, v) in ask)
+                Log.Debug($"ask {k} = {Describe(k, v)}");
+
+        string id = (ask.GetValueOrDefault("TransferID") as Dictionary<string, object?>)?.GetValueOrDefault("id") as string
+                    ?? Guid.NewGuid().ToString().ToUpperInvariant();
+        var files = (ask.GetValueOrDefault("Files") as List<object?> ?? [])
+            .OfType<Dictionary<string, object?>>()
+            .Select(f => new IncomingFile(
+                f.GetValueOrDefault("FileName") as string ?? "?",
+                f.GetValueOrDefault("FileType") as string ?? "public.data",
+                f.GetValueOrDefault("FileSize") as long?))
+            .ToList();
+        var urls = (ask.GetValueOrDefault("Items") as List<object?> ?? []).OfType<string>().ToList();
+        return new IncomingTransfer(
+            id,
+            ask.GetValueOrDefault("SenderComputerName") as string ?? "Someone",
+            ask.GetValueOrDefault("SenderModelName") as string,
+            files,
+            urls,
+            ask.GetValueOrDefault("FileIcon") as byte[],
+            ask.GetValueOrDefault("SenderRecordData") as byte[]);
     }
 
     void Upload(HttpRequest req, Stream s)
     {
+        IncomingTransfer? offer;
+        lock (accepted)
+        {
+            var id = req.Header("transferid");
+            offer = id != null && accepted.Remove(id, out var o) ? o : lastAccepted;
+            if (offer != null && id == null)
+                accepted.Remove(offer.Id);
+            lastAccepted = null;
+        }
+        if (offer == null)
+        {
+            // Nothing accepted to go with it: refuse, rather than take files
+            // nobody said yes to.
+            Log.Warn("upload without an accepted /Ask; refused");
+            req.Drain();
+            HttpResponse.Write(s, 403, close: true);
+            return;
+        }
+
         var type = req.Header("content-type")?.ToLowerInvariant() ?? "";
         // cpio (OpenDrop, older iOS; maybe gzipped), or DVZip around cpio (iOS 26).
         if (type != "application/x-cpio" && type != "application/x-dvzip")
         {
             Log.Warn($"upload: Content-Type \"{type}\", not application/x-cpio or x-dvzip");
             HttpResponse.Write(s, 406, close: true);
+            Failed?.Invoke(offer, $"unsupported upload type {type}");
             return;
         }
+        long? total = long.TryParse(req.Header("totalbytes"), out long t) ? t : offer.Files.Sum(f => f.Size ?? 0) is > 0 and var sum ? sum : null;
         var sw = Stopwatch.StartNew();
         var counted = new CountingStream(req.Body);
         DvZipStream? dvzip = type == "application/x-dvzip" ? new DvZipStream(counted) : null;
         try
         {
-            var files = Cpio.Extract(dvzip ?? (Stream)counted, opt.SaveDir);
+            long lastReport = 0;
+            var files = Cpio.Extract(dvzip ?? (Stream)counted, opt.SaveDir, written =>
+            {
+                if (written - lastReport >= 64 * 1024 || (total is { } tt && written >= tt))
+                {
+                    lastReport = written;
+                    Progress?.Invoke(offer, written, total);
+                }
+            });
             req.Drain();
             double secs = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
-            Log.Info($"received {files.Count} file(s) from {lastSender}: {counted.Count / 1024.0:F0} kB in {secs:F1} s " +
+            Log.Info($"received {files.Count} file(s) from {offer.SenderName}: {counted.Count / 1024.0:F0} kB in {secs:F1} s " +
                      $"({counted.Count / 1024.0 / secs:F0} kB/s)");
             if (dvzip != null)
                 Log.Debug($"dvzip: {dvzip.Blocks} block(s), {dvzip.StoredBlocks} stored");
             foreach (var f in files)
                 Log.Info($"  {f}");
             HttpResponse.Write(s, 200, close: true);
+            Completed?.Invoke(offer, files);
         }
-        catch (InvalidDataException e)
+        catch (Exception e) when (e is InvalidDataException or IOException)
         {
             Log.Error($"upload failed after {counted.Count / 1024.0:F0} kB: {e.Message}");
-            HttpResponse.Write(s, 400, close: true);
+            try
+            {
+                HttpResponse.Write(s, 400, close: true);
+            }
+            catch (IOException)
+            {
+            }
+            Failed?.Invoke(offer, e.Message);
         }
     }
 
@@ -205,12 +329,25 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         return ms.ToArray();
     }
 
+    static object? Field(byte[] body, string key)
+    {
+        try
+        {
+            return body.Length > 0 && Plist.Read(body) is Dictionary<string, object?> d ? d.GetValueOrDefault(key) : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     /// A plist value for the log: whole when it's small and says nothing about
     /// anyone; type and size for identities, records and icons.
     static string Describe(string key, object? v) => v switch
     {
         _ when key is "SenderRecordData" or "SenderIdentityAuthTag" or "FileIcon" =>
-            $"<{v?.GetType().Name} of {(v is byte[] b ? b.Length : v?.ToString()?.Length ?? 0)}>",
+            $"<{v?.GetType().Name} of {(v is byte[] b ? b.Length : v?.ToString()?.Length ?? 0)}" +
+            (key == "FileIcon" && v is byte[] icon && icon.Length >= 12 ? $", starts {Convert.ToHexString(icon, 0, 12)}" : "") + ">",
         byte[] b => b.Length <= 32 ? $"<{b.Length} bytes {Convert.ToHexString(b)}>" : $"<{b.Length} bytes>",
         string s => $"\"{s}\"",
         Dictionary<string, object?> d => "{" + string.Join(", ", d.Select(kv => $"{kv.Key}: {Describe(kv.Key, kv.Value)}")) + "}",
@@ -218,19 +355,6 @@ public sealed class Receiver(AwdlInterface iface, X509Certificate2 cert, Receive
         null => "null",
         _ => $"{v} ({v.GetType().Name})",
     };
-
-    static string Describe(byte[] body)
-    {
-        try
-        {
-            if (body.Length > 0 && Plist.Read(body) is Dictionary<string, object?> d)
-                return d.ContainsKey("SenderRecordData") ? " (with a sender record)" : "";
-        }
-        catch (FormatException)
-        {
-        }
-        return "";
-    }
 
     sealed class CountingStream(Stream inner) : Stream
     {

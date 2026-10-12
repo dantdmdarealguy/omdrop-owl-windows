@@ -10,9 +10,11 @@ namespace Omdrop;
 /// </summary>
 public static class Cpio
 {
-    /// <summary>Extracts every regular file and directory under `dir`; returns the files written.</summary>
-    public static List<string> Extract(Stream input, string dir)
+    /// <summary>Extracts every regular file and directory under `dir`; returns the files written.
+    /// `onWritten` hears the running total of file bytes written.</summary>
+    public static List<string> Extract(Stream input, string dir, Action<long>? onWritten = null)
     {
+        long writtenTotal = 0;
         var s = MaybeGunzip(input);
         var written = new List<string>();
         Directory.CreateDirectory(dir);
@@ -35,7 +37,11 @@ public static class Cpio
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 target = Unused(target);
                 using (var f = File.Create(target))
-                    Copy(s, f, e.Size);
+                    Copy(s, f, e.Size, n =>
+                    {
+                        writtenTotal += n;
+                        onWritten?.Invoke(writtenTotal);
+                    });
                 written.Add(target);
                 e = e with { Size = 0 };
             }
@@ -166,7 +172,7 @@ public static class Cpio
         return b;
     }
 
-    static void Copy(Stream from, Stream to, long n)
+    static void Copy(Stream from, Stream to, long n, Action<int>? onChunk = null)
     {
         var buf = new byte[81920];
         while (n > 0)
@@ -175,6 +181,7 @@ public static class Cpio
             if (r == 0)
                 throw new InvalidDataException("cpio: truncated file");
             to.Write(buf, 0, r);
+            onChunk?.Invoke(r);
             n -= r;
         }
     }

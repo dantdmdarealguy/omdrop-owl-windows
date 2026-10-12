@@ -95,6 +95,13 @@ def main():
     assert not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(save)), "escaped.txt"))
     print(f"upload: {st}, files intact, traversal entry skipped")
 
+    # Every upload follows an accepted /Ask; the receiver refuses one that doesn't.
+    st, _ = post(addr, scope, "/Upload", b"", {"Content-Type": "application/x-cpio"}, chunked=True)
+    assert st == 403, st
+    print("upload with no /Ask: 403")
+    st, _ = post(addr, scope, "/Ask", plistlib.dumps(ask, fmt=plistlib.FMT_BINARY))
+    assert st == 200, st
+
     # iOS 26's DVZip: big-endian length per block, bit 31 = stored, else a zlib stream.
     raw = cpio_odc([("./dv.bin", payload[:150_000], 0o100644)])
     dv, i, stored = b"", 0, False

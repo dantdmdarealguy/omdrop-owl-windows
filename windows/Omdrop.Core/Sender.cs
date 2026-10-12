@@ -4,85 +4,109 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace Omdrop;
 
+public enum SendResult { Sent, Declined, Failed }
+
 public sealed record SenderOptions(string ComputerName, string ModelName, string? To, TimeSpan Timeout, bool Ble, bool LegacyBle,
     bool IncludeSelf = false, string? Format = null);
 
 /// <summary>
-/// Sending, as OpenDrop's client does it: wake nearby devices over Bluetooth,
-/// browse _airdrop._tcp on awdl0, POST /Discover to each until one answers
-/// with its name, then /Ask (the person on the other end accepts) and /Upload
-/// (a gzipped cpio archive).
+/// Sending, as an iPhone does it: wake nearby devices over Bluetooth, browse
+/// _airdrop._tcp on awdl0, POST /Discover to each for its name, then, to the
+/// one the user chose, /Ask (its owner accepts) and /Upload (DVZip or gzipped
+/// cpio, named by the /Ask's TransferID).
 /// </summary>
 public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOptions opt)
 {
     readonly string senderId = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
 
-    public async Task<int> SendAsync(IReadOnlyList<string> files, CancellationToken ct)
+    /// <summary>
+    /// Nearby devices that answer /Discover with a name, as they turn up, while
+    /// the caller keeps listening: the Bluetooth wake advert runs as long as this
+    /// does. Nothing reaches anyone's screen; /Discover is what any open share
+    /// sheet sends.
+    /// </summary>
+    public async IAsyncEnumerable<(AirDropService Service, string Name)> FindAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         using var advert = opt.Ble ? new AirDropAdvert(opt.LegacyBle) : null;
         advert?.Start();
         using var browser = new Browser(iface, opt.IncludeSelf);
+        await foreach (var service in browser.BrowseAsync(ct))
+        {
+            Log.Debug($"found {service.Instance} at [{service.Address}]:{service.Port}" +
+                      (service.Flags is { } f ? $", flags 0x{f:x}" : ""));
+            string? name;
+            try
+            {
+                name = await DiscoverAsync(service, ct);
+            }
+            catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or OperationCanceledException
+                                           or System.Security.Authentication.AuthenticationException or InvalidDataException)
+            {
+                if (ct.IsCancellationRequested)
+                    yield break;
+                Log.Debug($"{service.Instance}: /Discover failed: {e.Message}");
+                continue;
+            }
+            if (name != null) // null: Contacts Only, and we're not a contact
+                yield return (service, name);
+        }
+    }
+
+    /// <summary>The command line's send: to --to's exact name, else the one the user picks.</summary>
+    public async Task<int> SendAsync(IReadOnlyList<string> files, CancellationToken ct)
+    {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(opt.Timeout);
         Log.Info($"looking for {(opt.To != null ? $"\"{opt.To}\"" : "AirDrop receivers")} on {iface.Name} " +
                  $"for up to {opt.Timeout.TotalSeconds:F0} s; on an iPhone, set AirDrop to Everyone and keep it unlocked");
 
         // Never send to a device nobody chose: with --to, only an exact name match;
-        // without it, list what answers and let the user pick. /Discover is the only
-        // thing other devices see, and it's silent: what any open share sheet sends.
-        var found = new List<(AirDropService Service, string Name)>();
-        async Task Browse(Func<AirDropService, string, Task<bool>> onReceiver)
-        {
-            await foreach (var service in browser.BrowseAsync(deadline.Token))
-            {
-                Log.Debug($"found {service.Instance} at [{service.Address}]:{service.Port}" +
-                          (service.Flags is { } f ? $", flags 0x{f:x}" : ""));
-                string? name;
-                try
-                {
-                    name = await DiscoverAsync(service, ct);
-                }
-                catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or OperationCanceledException
-                                               or System.Security.Authentication.AuthenticationException or InvalidDataException)
-                {
-                    Log.Debug($"{service.Instance}: /Discover failed: {e.Message}");
-                    continue;
-                }
-                if (name != null && await onReceiver(service, name)) // null: Contacts Only, not us
-                    return;
-            }
-        }
-
+        // without it, list what answers and let the user pick.
         if (opt.To != null)
         {
             (AirDropService Service, string Name)? match = null;
-            await Browse((service, name) =>
+            try
             {
-                if (!name.Equals(opt.To, StringComparison.OrdinalIgnoreCase))
+                await foreach (var (service, name) in FindAsync(deadline.Token))
                 {
+                    if (name.Equals(opt.To, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = (service, name);
+                        break;
+                    }
                     Log.Info($"found \"{name}\" (not \"{opt.To}\")");
-                    return Task.FromResult(false);
                 }
-                match = (service, name);
-                return Task.FromResult(true);
-            });
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+            }
             if (match is not { } m)
             {
                 Log.Error($"no device called \"{opt.To}\" answered");
                 return 1;
             }
-            return await SendToAsync(m.Service, m.Name, files, ct) ? 0 : 1;
+            return await SendToAsync(m.Service, m.Name, files, null, null, ct) == SendResult.Sent ? 0 : 1;
         }
 
         Console.WriteLine("Devices appear below as they answer. Type a number and Enter to send to it; Enter alone cancels.");
-        var listing = Browse((service, name) =>
+        var found = new List<(AirDropService Service, string Name)>();
+        var listing = Task.Run(async () =>
         {
-            lock (found)
+            try
             {
-                found.Add((service, name));
-                Console.WriteLine($"  [{found.Count}] {name}");
+                await foreach (var d in FindAsync(deadline.Token))
+                {
+                    lock (found)
+                    {
+                        found.Add(d);
+                        Console.WriteLine($"  [{found.Count}] {d.Name}");
+                    }
+                }
             }
-            return Task.FromResult(false);
+            catch (OperationCanceledException)
+            {
+            }
         });
         var read = Task.Run(Console.ReadLine);
         await Task.WhenAny(read, listing);
@@ -103,7 +127,7 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             }
             chosen = found[n - 1];
         }
-        return await SendToAsync(chosen.Service, chosen.Name, files, ct) ? 0 : 1;
+        return await SendToAsync(chosen.Service, chosen.Name, files, null, null, ct) == SendResult.Sent ? 0 : 1;
     }
 
     async Task<string?> DiscoverAsync(AirDropService service, CancellationToken ct)
@@ -122,21 +146,28 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
         return reply.GetValueOrDefault("ReceiverComputerName") as string;
     }
 
-    async Task<bool> SendToAsync(AirDropService service, string name, IReadOnlyList<string> files, CancellationToken ct)
+    /// <summary>
+    /// Offers `files` to one device the user chose, then sends them once its
+    /// owner accepts. `icon` is the thumbnail their prompt shows (JPEG); progress
+    /// reports archive bytes sent of the total.
+    /// </summary>
+    public async Task<SendResult> SendToAsync(AirDropService service, string name, IReadOnlyList<string> files,
+        byte[]? icon, IProgress<(long Sent, long Total)>? progress, CancellationToken ct)
     {
         try
         {
-            return await TrySendToAsync(service, name, files, ct);
+            return await TrySendToAsync(service, name, files, icon, progress, ct);
         }
         catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or InvalidDataException
-                                       or System.Security.Authentication.AuthenticationException)
+                                       or System.Security.Authentication.AuthenticationException or OperationCanceledException)
         {
             Log.Error($"sending to \"{name}\" failed: {e.Message}");
-            return false;
+            return SendResult.Failed;
         }
     }
 
-    async Task<bool> TrySendToAsync(AirDropService service, string name, IReadOnlyList<string> files, CancellationToken ct)
+    async Task<SendResult> TrySendToAsync(AirDropService service, string name, IReadOnlyList<string> files,
+        byte[]? icon, IProgress<(long Sent, long Total)>? progress, CancellationToken ct)
     {
         Log.Info($"asking \"{name}\" to accept {string.Join(", ", files.Select(Path.GetFileName))}; waiting for them to tap Accept");
         using var conn = await Connect(service, ct);
@@ -166,11 +197,13 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             }).ToList(),
             ["ConvertMediaFormats"] = false,
         };
+        if (icon != null)
+            ask["FileIcon"] = icon;
         var (status, _) = conn.Post("/Ask", "application/octet-stream", Plist.Write(ask));
         if (status != 200)
         {
-            Log.Error($"\"{name}\" declined (HTTP {status})");
-            return false;
+            Log.Info($"\"{name}\" declined (HTTP {status})");
+            return SendResult.Declined;
         }
         Log.Info($"\"{name}\" accepted; sending");
 
@@ -196,7 +229,7 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             }
             long length = new FileInfo(tmp).Length;
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            using var archive = File.OpenRead(tmp);
+            using var archive = new ProgressStream(File.OpenRead(tmp), length, progress);
             // On the /Ask connection, as OpenDrop does, unless the receiver closed it.
             var upload = conn;
             if (!conn.IsOpen)
@@ -213,10 +246,10 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             if (status != 200)
             {
                 Log.Error($"upload refused (HTTP {status})");
-                return false;
+                return SendResult.Failed;
             }
             Log.Info($"sent {files.Count} file(s) to \"{name}\": {length / 1024.0:F0} kB in {s:F1} s ({length / 1024.0 / s:F0} kB/s)");
-            return true;
+            return SendResult.Sent;
         }
         finally
         {
@@ -224,11 +257,43 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
         }
     }
 
+    /// Reports how far through a stream reading has got.
+    sealed class ProgressStream(Stream inner, long total, IProgress<(long, long)>? progress) : Stream
+    {
+        long done, lastReport;
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int n = inner.Read(buffer, offset, count);
+            done += n;
+            if (progress != null && (done - lastReport >= 32 * 1024 || n == 0))
+            {
+                lastReport = done;
+                progress.Report((done, total));
+            }
+            return n;
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+                inner.Dispose();
+            base.Dispose(disposing);
+        }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => total;
+        public override long Position { get => done; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     Task<HttpConnection> Connect(AirDropService service, CancellationToken ct) =>
         HttpConnection.OpenAsync(new IPEndPoint(service.Address, service.Port), cert, TimeSpan.FromSeconds(20), ct);
 
     /// The type an Apple device uses to pick an app for the file.
-    static string Uti(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    public static string Uti(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
         ".jpg" or ".jpeg" => "public.jpeg",
         ".png" => "public.png",

@@ -84,13 +84,15 @@ maybe gzip; extract).
 Split: the service (SYSTEM) only runs the radio side; everything that's about the user runs
 in the tray app in their session.
 
-- [ ] Projects: `windows/Omdrop.Core` (library: everything but Program.cs), `windows/omdrop`
+- [x] Projects: `windows/Omdrop.Core` (library: everything but Program.cs), `windows/omdrop`
       (CLI), `windows/OmdropService`, `windows/OmdropTray` (WPF + WinForms NotifyIcon).
-- [ ] Receiver: ask the user instead of auto-accepting (/Ask waits for a decision; decline =
+- [x] Receiver: ask the user instead of auto-accepting (/Ask waits for a decision; decline =
       HTTP 403), progress and completion events, keep the sender's FileIcon.
-- [ ] Service `OmdropOwl` (LocalSystem): config in %ProgramData%\omdrop-owl\config.json (COM
-      port, channel), runs and restarts owl.exe, firewall rule for the tray exe, named pipe
-      `omdrop-owl` (status / start / stop) for the tray.
+- [x] Service `OmdropOwl` (LocalSystem): config in %ProgramData%\omdrop-owl\config.json (COM
+      port or auto by USB bridge VID, channel), runs and restarts owl.exe (stops it through
+      OWL_STOP_EVENT, so awdl0 goes), firewall rule for the tray exe, named pipe
+      `omdrop-owl` (status / start / stop / set / firewall). Tested in the foreground
+      (tools/test/pipe_status.py); `tools/install-service.ps1` installs it (admin), untested.
 - [ ] Tray app: icon with state (radio, awdl0), menu (Receiving: Off / Everyone for 10
       minutes / Everyone; Send files...; Open Downloads; Settings; Quit), single instance,
       `--send FILES` forwarded to the running instance, Explorer "Send to > AirDrop".

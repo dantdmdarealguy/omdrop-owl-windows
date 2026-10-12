@@ -14,9 +14,29 @@ public static class Log
             Write("DEBUG", msg);
     }
 
+    /// Also append to this file (a service has no console worth writing to).
+    public static string? FilePath { get; set; }
+
+    /// Hears every line, for UIs that show a log.
+    public static event Action<string>? Line;
+
     static void Write(string level, string msg)
     {
+        var line = $"{DateTime.Now:HH:mm:ss} {level}: {msg}";
         lock (Gate)
-            Console.Error.WriteLine($"{DateTime.Now:HH:mm:ss} {level}: {msg}");
+        {
+            Console.Error.WriteLine(line);
+            if (FilePath != null)
+            {
+                try
+                {
+                    File.AppendAllText(FilePath, $"{DateTime.Now:yyyy-MM-dd} {line}{Environment.NewLine}");
+                }
+                catch (IOException)
+                {
+                }
+            }
+        }
+        Line?.Invoke(line);
     }
 }

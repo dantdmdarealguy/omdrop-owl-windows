@@ -8,6 +8,7 @@
  */
 #include <windows.h>
 #include <mmsystem.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <ev.h>
@@ -39,6 +40,7 @@ struct ev_loop {
 	int npending;
 	volatile LONG stop;
 	HANDLE wake;  /* Ctrl-C */
+	HANDLE stop_event; /* OWL_STOP_EVENT, set by whoever started us (the service) */
 	HANDLE timer; /* high-resolution waitable timer, or NULL */
 	LARGE_INTEGER qpf;
 };
@@ -69,6 +71,15 @@ struct ev_loop *ev_default_loop(unsigned int flags)
 			timeBeginPeriod(1);
 		}
 		SetConsoleCtrlHandler(on_ctrl, TRUE);
+		/* A service has no console to send Ctrl-C through: it names an event
+		 * instead, and setting it ends the loop the same way, so awdl0 is
+		 * removed rather than left behind. */
+		const char *name = getenv("OWL_STOP_EVENT");
+		if (name && *name) {
+			loop->stop_event = OpenEventA(SYNCHRONIZE, FALSE, name);
+			if (!loop->stop_event)
+				log_warn("ev: can't open stop event %s (%lu)", name, GetLastError());
+		}
 		loop->init = 1;
 	}
 	return loop;
@@ -245,6 +256,8 @@ static void wait_handles(struct ev_loop *loop, double timeout)
 	ev_io *owner[MAXIMUM_WAIT_OBJECTS] = {NULL}; /* the watcher each handle belongs to */
 	DWORD n = 0, ms = INFINITE;
 	hs[n++] = loop->wake;
+	if (loop->stop_event)
+		hs[n++] = loop->stop_event;
 	for (int i = 0; i < loop->nios; i++) {
 		struct fd_map *m = fd_lookup(loop->ios[i]->fd);
 		for (int k = 0; m && k < m->n && n < MAXIMUM_WAIT_OBJECTS - 1; k++) {
@@ -268,13 +281,17 @@ static void wait_handles(struct ev_loop *loop, double timeout)
 	DWORD r = WaitForMultipleObjects(n, hs, FALSE, ms);
 	if (loop->timer)
 		CancelWaitableTimer(loop->timer);
+	if (loop->stop_event && WaitForSingleObject(loop->stop_event, 0) == WAIT_OBJECT_0) {
+		log_info("stop requested");
+		ev_break(loop, 0);
+	}
 
 	/* The handle that ended the wait counts as ready even though it may read
 	 * as unsignaled now: an auto-reset event (Wintun's read event is one) is
 	 * consumed by the wait that sees it, and polling it again loses the
 	 * wakeup. Wintun signals once per empty-to-nonempty edge, so a lost one
 	 * stalled awdl0 for good. */
-	if (r >= WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + n && owner[r - WAIT_OBJECT_0])
+	if (r < WAIT_OBJECT_0 + n && owner[r - WAIT_OBJECT_0]) /* WAIT_OBJECT_0 is 0 */
 		ev_feed_event(loop, owner[r - WAIT_OBJECT_0], EV_READ);
 
 	/* Every other ready watcher, not only the first handle Windows reports. */

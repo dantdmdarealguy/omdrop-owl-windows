@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!-- OmdropService.exe, the "OmdropOwl" Windows service: runs owl.exe (which
+       needs an administrator for its Wintun awdl0) and answers the tray app on
+       the omdrop-owl named pipe. Nothing about the user lives here. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Omdrop.Service</RootNamespace>
+    <AssemblyName>OmdropService</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Omdrop.Core\Omdrop.Core.csproj" />
+  </ItemGroup>
+
+</Project>

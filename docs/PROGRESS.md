@@ -79,10 +79,35 @@ maybe gzip; extract).
         DVZip) arrived in 11.5 s, ~19 kB/s. Slower than receiving (75-150 kB/s): on channel 6
         we can transmit only in the phone's one channel-6 slot in sixteen.
 
+## Now: Phase 3 + polish (asked 2026-10-12): service, tray app, overlays, thumbnail, Contacts Only
+
+Split: the service (SYSTEM) only runs the radio side; everything that's about the user runs
+in the tray app in their session.
+
+- [ ] Projects: `windows/Omdrop.Core` (library: everything but Program.cs), `windows/omdrop`
+      (CLI), `windows/OmdropService`, `windows/OmdropTray` (WPF + WinForms NotifyIcon).
+- [ ] Receiver: ask the user instead of auto-accepting (/Ask waits for a decision; decline =
+      HTTP 403), progress and completion events, keep the sender's FileIcon.
+- [ ] Service `OmdropOwl` (LocalSystem): config in %ProgramData%\omdrop-owl\config.json (COM
+      port, channel), runs and restarts owl.exe, firewall rule for the tray exe, named pipe
+      `omdrop-owl` (status / start / stop) for the tray.
+- [ ] Tray app: icon with state (radio, awdl0), menu (Receiving: Off / Everyone for 10
+      minutes / Everyone; Send files...; Open Downloads; Settings; Quit), single instance,
+      `--send FILES` forwarded to the running instance, Explorer "Send to > AirDrop".
+- [ ] Overlays (WPF, dark, rounded, top-right like macOS): incoming request with thumbnail +
+      Accept/Decline, receive progress, "received" with Open/Show in folder, device picker
+      for sending, send progress/result.
+- [ ] Thumbnail: send FileIcon for images (check what format the iPhone's own is: JPEG vs
+      JPEG 2000) and show incoming FileIcons in the request overlay.
+- [ ] Contacts Only, receiving: accept only senders whose Apple-signed SenderRecordData
+      (PKCS#7, validated phone/email hashes) matches an imported contacts .vcf. Sending to
+      Contacts-Only devices needs an Apple-issued identity of our own (only obtainable from a
+      Mac signed into the Apple ID), so that part is import-only if the user has one.
+- [ ] Installer (Phase 5) afterwards.
+
 ## Next
 - ESP32-C5 (arrives Tuesday 2026-10-13): flash, run OWL on channel 149; expect sending to
   gain most (the phone spends most slots on 149).
-- Maybe: FileIcon (a thumbnail in /Ask) for a nicer prompt on the phone; Contacts Only.
 - Phase 3: Windows service + tray app; Phase 5: installer.
 
 ## How to run what exists

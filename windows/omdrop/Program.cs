@@ -7,6 +7,7 @@ using Omdrop;
 //   send     send files to a nearby Apple device
 //   ble      only the Bluetooth wake advert, to check Windows sends it
 //   firewall add the inbound rule receiving and sending need (administrator)
+//   radio    ask the OmdropOwl service: status, start, stop
 
 const string Usage = """
     usage: omdrop receive [--name NAME] [--save DIR] [--iface awdl0] [--port 8771]
@@ -15,12 +16,21 @@ const string Usage = """
                                [--name NAME] [--iface awdl0] [-v]
            omdrop ble [SECONDS] [--legacy-ble]
            omdrop firewall      (administrator: allow AirDrop in, link-local only)
+           omdrop radio [status|start|stop]   (the OmdropOwl service)
       --name     what Apple devices see us as (default: this computer's name)
       --save     where received files go (default: Downloads)
       --burst    announcement copies per round; 64 suits one channel-6 radio (default)
       --to       send only to the device with exactly this name (default: list devices, you pick)
       --no-ble   don't send the Bluetooth advert that wakes Apple devices
     """;
+
+if (args.Length > 0 && args[0] == "radio")
+{
+    var cmd = args.Length > 1 ? args[1] : "status";
+    var status = await RadioPipe.SendAsync(new RadioRequest(cmd), TimeSpan.FromSeconds(3));
+    Console.WriteLine(status == null ? "the OmdropOwl service isn't running (tools\install-service.ps1)" : RadioPipe.Serialize(status));
+    return status == null ? 1 : 0;
+}
 
 if (args.Length == 0 || args[0] is not ("receive" or "send" or "ble" or "firewall"))
 {

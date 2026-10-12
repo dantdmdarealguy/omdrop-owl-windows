@@ -6,7 +6,8 @@
 param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
-$Dest = Join-Path $env:ProgramFiles 'omdrop-owl'
+# The 64-bit Program Files even from a 32-bit PowerShell, where $env:ProgramFiles is the x86 one.
+$Dest = Join-Path ($env:ProgramW6432 ?? $env:ProgramFiles) 'omdrop-owl'
 $Name = 'OmdropOwl'
 
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()

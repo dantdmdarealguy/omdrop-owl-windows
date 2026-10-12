@@ -13,7 +13,7 @@
     <RootNamespace>Omdrop</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Version>0.1.0</Version>
-    <!-- binReleaseomdrop.exe, whatever the target framework: firewall rules name the path. -->
+    <!-- bin\Release\omdrop.exe, whatever the target framework: firewall rules name the path. -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 

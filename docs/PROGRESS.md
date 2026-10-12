@@ -65,13 +65,17 @@ maybe gzip; extract).
         attempt. (The 266-byte record before it is a TLS 1.3 session ticket, not a reply.)
         Apple's senders and OpenDrop's receiver use Transfer-Encoding: chunked for /Upload;
         we sent a Content-Length. Now chunked, and on the /Ask connection unless it's closed.
-  - [ ] Live run 5: still closed on our /Upload headers. The iPhone's own /Ask (as a sender)
+  - [x] Live run 5: still closed on our /Upload headers. The iPhone's own /Ask (as a sender)
         has keys ours lacks: TransferID, TransferType, Items, FileIcon, SenderIdentityAuthTag.
-        Suspect TransferID ties /Ask to /Upload. The receiver now logs every request header
-        and each /Ask value (records, auth tags and icons by size only): next, one receive
-        run (phone -> PC) to capture them, then mirror them in send.
-  - [ ] Live: `tools\airdrop-test.ps1 -Send photo.jpg` to the iPhone. Unknowns: does the BLE
-        advert wake it; does iOS 26 take a gzipped cpio upload (else DVZip); is FileIcon needed.
+  - [x] Capture (receive run, phone -> PC, with header/value logging). An Apple sender's
+        /Ask: `TransferID = {id: <UUID>}`, `TransferType = {files: {}}`, `Items = []`, files
+        with `FileSize` and `ShouldConvertMediaFormats`. Its /Upload, on the /Ask connection:
+        headers `TransferID: <same UUID>`, `TotalBytes: <sum of file sizes>`,
+        `SenderPseudonym`, `SenderPushToken`; chunked DVZip around odc cpio (070707).
+        `send` now sends TransferID (both places), TotalBytes, TransferType, Items, FileSize
+        and ShouldConvertMediaFormats; not the pseudonym or push token (Apple ID), nor
+        FileIcon (unless it proves needed). Loop-tested.
+  - [ ] Live run 6: `tools\airdrop-test.ps1 -Send photo.jpg -To "Vaibhav's iPhone"`.
 
 ## Next
 - ESP32-C5 (arrives Tuesday 2026-10-13): flash, run OWL on channel 149.

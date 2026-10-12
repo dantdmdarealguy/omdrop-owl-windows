@@ -260,10 +260,12 @@ public sealed class HttpConnection : IDisposable
     /// A `length` below zero sends the body chunked, as Apple's senders send
     /// /Upload; an iPhone hangs up on an upload with a Content-Length.
     public (int Status, byte[] Body) Post(string path, string contentType, Stream body, long length,
-        bool expectContinue = false)
+        bool expectContinue = false, IEnumerable<(string Name, string Value)>? extraHeaders = null)
     {
         var head = new StringBuilder($"POST {path} HTTP/1.1\r\n");
         head.Append("Content-Type: ").Append(contentType).Append("\r\n");
+        foreach (var (hname, hvalue) in extraHeaders ?? [])
+            head.Append(hname).Append(": ").Append(hvalue).Append("\r\n");
         if (length >= 0)
             head.Append("Content-Length: ").Append(length).Append("\r\n");
         else

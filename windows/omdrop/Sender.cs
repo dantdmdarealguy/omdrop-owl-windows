@@ -142,21 +142,29 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
         using var conn = await Connect(service, ct);
         conn.TimeoutMs = 120_000; // the other person has to accept
 
+        // As an iPhone sends it (iOS 26). TransferID ties /Ask to /Upload: the upload
+        // names it in a header, and an upload without it is dropped on sight.
+        var transferId = Guid.NewGuid().ToString().ToUpperInvariant();
+        long totalBytes = files.Sum(f => new FileInfo(f).Length);
         var ask = new Dictionary<string, object?>
         {
-            ["SenderComputerName"] = opt.ComputerName,
-            ["BundleID"] = "com.apple.finder",
-            ["SenderModelName"] = opt.ModelName,
+            ["TransferID"] = new Dictionary<string, object?> { ["id"] = transferId },
+            ["TransferType"] = new Dictionary<string, object?> { ["files"] = new Dictionary<string, object?>() },
             ["SenderID"] = senderId,
-            ["ConvertMediaFormats"] = false,
+            ["BundleID"] = "com.apple.finder",
+            ["SenderComputerName"] = opt.ComputerName,
+            ["SenderModelName"] = opt.ModelName,
+            ["Items"] = new List<object?>(),
             ["Files"] = files.Select(f => (object?)new Dictionary<string, object?>
             {
                 ["FileName"] = Path.GetFileName(f),
                 ["FileType"] = Uti(f),
+                ["FileSize"] = new FileInfo(f).Length,
                 ["FileBomPath"] = "./" + Path.GetFileName(f),
                 ["FileIsDirectory"] = false,
-                ["ConvertMediaFormats"] = 0,
+                ["ShouldConvertMediaFormats"] = false,
             }).ToList(),
+            ["ConvertMediaFormats"] = false,
         };
         var (status, _) = conn.Post("/Ask", "application/octet-stream", Plist.Write(ask));
         if (status != 200)
@@ -200,7 +208,7 @@ public sealed class Sender(AwdlInterface iface, X509Certificate2 cert, SenderOpt
             using var extra = upload == conn ? null : upload;
             Log.Debug($"upload: {(dvzip ? "dvzip" : "gzip")} cpio, {length} bytes");
             (status, _) = upload.Post("/Upload", dvzip ? "application/x-dvzip" : "application/x-cpio", archive, -1,
-                expectContinue: true);
+                expectContinue: true, extraHeaders: [("TransferID", transferId), ("TotalBytes", totalBytes.ToString())]);
             double s = Math.Max(sw.Elapsed.TotalSeconds, 0.001);
             if (status != 200)
             {

@@ -93,15 +93,15 @@ in the tray app in their session.
       OWL_STOP_EVENT, so awdl0 goes), firewall rule for the tray exe, named pipe
       `omdrop-owl` (status / start / stop / set / firewall). Tested in the foreground
       (tools/test/pipe_status.py); `tools/install-service.ps1` installs it (admin), untested.
-- [ ] Tray app: icon with state (radio, awdl0), menu (Receiving: Off / Everyone for 10
+- [x] Tray app (built; live test next): icon with state (radio, awdl0), menu (Receiving: Off / Everyone for 10
       minutes / Everyone; Send files...; Open Downloads; Settings; Quit), single instance,
       `--send FILES` forwarded to the running instance, Explorer "Send to > AirDrop".
-- [ ] Overlays (WPF, dark, rounded, top-right like macOS): incoming request with thumbnail +
+- [x] Overlays (WPF, dark, rounded, top-right like macOS; `OmdropTray --render-demo PNG` renders samples): incoming request with thumbnail +
       Accept/Decline, receive progress, "received" with Open/Show in folder, device picker
       for sending, send progress/result.
-- [ ] Thumbnail: send FileIcon for images (check what format the iPhone's own is: JPEG vs
+- [~] Thumbnail (code done, live test next): send FileIcon for images (check what format the iPhone's own is: JPEG vs
       JPEG 2000) and show incoming FileIcons in the request overlay.
-- [ ] Contacts Only, receiving: accept only senders whose Apple-signed SenderRecordData
+- [~] Contacts Only (code done: Contacts.cs, SignedCms + hashed identifiers; untested live), receiving: accept only senders whose Apple-signed SenderRecordData
       (PKCS#7, validated phone/email hashes) matches an imported contacts .vcf. Sending to
       Contacts-Only devices needs an Apple-issued identity of our own (only obtainable from a
       Mac signed into the Apple ID), so that part is import-only if the user has one.

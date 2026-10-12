@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- OmdropTray.exe: AirDrop in the notification area. Receives (asking first,
+       in an overlay), sends (a device picker, from the menu or Explorer's Send
+       To), and shows the radio service's state. Runs as the signed-in user. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WPF and WinForms share names (Application, MessageBox); usings are explicit. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>OmdropTray</AssemblyName>
+    <RootNamespace>Omdrop.Tray</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Omdrop.Core\Omdrop.Core.csproj" />
+  </ItemGroup>
+
+</Project>

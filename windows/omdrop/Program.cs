@@ -28,7 +28,7 @@ if (args.Length > 0 && args[0] == "radio")
 {
     var cmd = args.Length > 1 ? args[1] : "status";
     var status = await RadioPipe.SendAsync(new RadioRequest(cmd), TimeSpan.FromSeconds(3));
-    Console.WriteLine(status == null ? "the OmdropOwl service isn't running (tools\install-service.ps1)" : RadioPipe.Serialize(status));
+    Console.WriteLine(status == null ? @"the OmdropOwl service isn't running (tools\install-service.ps1)" : RadioPipe.Serialize(status));
     return status == null ? 1 : 0;
 }
 

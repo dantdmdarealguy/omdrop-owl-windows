@@ -107,6 +107,30 @@ without `--to` it lists the devices that answer and you pick one. The other
 person accepts on their device. It sends as an iPhone does: a TransferID
 shared by /Ask and /Upload, and a chunked DVZip upload.
 
+## Known issues
+
+- **WCH's CH343 driver can crash Windows.** On the ESP32-S3 DevKitC-1, the
+  "COM" port is a WCH CH343 USB-serial bridge (`USB\VID_1A86&PID_55D3`). Its
+  vendor driver, `CH343S64.SYS` v2.1.2025.7, bugchecked one PC three times in
+  a day (0xD1 DRIVER_IRQL_NOT_LESS_OR_EQUAL at `CH343S64+0x6191`), each time
+  soon after the board re-enumerated (a flash, a reset into the bootloader, a
+  replug). The CH343 is CDC-compatible, so Windows' own `usbser.sys` drives it
+  too. Remove WCH's driver from an administrator terminal, after stopping
+  whatever holds the port:
+  ```powershell
+  Stop-Service OmdropOwl
+  pnputil /enum-drivers | Select-String -Context 1,4 CH343   # find its oemNN.inf
+  pnputil /delete-driver oemNN.inf /uninstall /force
+  Start-Service OmdropOwl
+  ```
+  Then replug the board: Device Manager should show "USB Serial Device (COMx)".
+  The service finds the board by its USB IDs, so a new COM number needs no
+  change there; flashing commands (`idf.py -p`) need the new one.
+- **Stop the service before flashing:** it keeps the board's serial port open.
+  `Stop-Service OmdropOwl`, flash, `Start-Service OmdropOwl`.
+- The ESP32-C5 (and the S3's other, native USB port) use Espressif's own
+  USB serial, `VID_303A`, on Windows' built-in driver, and avoid the CH343.
+
 ## Credits
 
 This is a standalone project, not a fork. Its design and starting point come from:

@@ -1,0 +1,49 @@
+diff --git i/daemon/core.c w/daemon/core.c
+index c19ccea..0a3fb36 100644
+--- i/daemon/core.c
++++ w/daemon/core.c
+@@ -40,6 +40,12 @@
+ #define ETHER_ETHERTYPE_OFFSET 12
+ 
+ #define POLL_NEW_UNICAST 0x1
++/* How long a unicast frame may wait for its peer to be on our channel. The
++ * host queue holds one unicast frame and reads nothing more until it goes, so
++ * one to a peer that never visits our channel (a fixed radio, -F, and a peer
++ * that lives on another) blocked everything behind it for good. TCP and mDNS
++ * retry; a link layer drops. */
++#define AWDL_UNICAST_MAX_WAIT_US 2000000
+ #define POLL_NEW_MULTICAST 0x2
+ 
+ static void dump_frame(const char *dump_file, const struct pcap_pkthdr *hdr, const uint8_t *buf) {
+@@ -86,6 +92,7 @@ static int poll_host_device(struct daemon_state *state) {
+ 				result |= POLL_NEW_MULTICAST;
+ 			} else { /* unicast */
+ 				state->next = buf;
++				state->next_since = clock_time_us();
+ 				result |= POLL_NEW_UNICAST;
+ 			}
+ 		}
+@@ -219,6 +226,11 @@ void awdl_send_unicast(struct ev_loop *loop, ev_timer *timer, int revents) {
+ 			log_debug("Drop frame to non-peer %s", ether_ntoa(&dst));
+ 			buf_free(state->next);
+ 			state->next = NULL;
++		} else if (now - state->next_since > AWDL_UNICAST_MAX_WAIT_US) {
++			log_debug("Drop frame to %s: not on our channel for %d ms", ether_ntoa(&dst),
++			          AWDL_UNICAST_MAX_WAIT_US / 1000);
++			buf_free(state->next);
++			state->next = NULL;
+ 		} else {
+ 			in = awdl_can_send_unicast_in(awdl_state, peer, now, AWDL_UNICAST_GUARD_TU);
+ 			if (in == 0) { /* send now */
+diff --git i/daemon/core.h w/daemon/core.h
+index cb4d240..6f14719 100644
+--- i/daemon/core.h
++++ w/daemon/core.h
+@@ -40,6 +40,7 @@ struct daemon_state {
+ 	struct ieee80211_state ieee80211_state;
+ 	struct ev_state ev_state;
+ 	struct buf *next;
++	uint64_t next_since; /* when next was queued, clock_time_us() */
+ 	cbuf_handle_t tx_queue_multicast;
+ 	const char *dump;
+ };

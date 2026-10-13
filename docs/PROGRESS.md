@@ -93,6 +93,13 @@ in the tray app in their session.
       OWL_STOP_EVENT, so awdl0 goes), firewall rule for the tray exe, named pipe
       `omdrop-owl` (status / start / stop / set / firewall). Tested in the foreground
       (tools/test/pipe_status.py); `tools/install-service.ps1` installs it (admin), untested.
+- [ ] Live test of service + tray (2026-10-12): neither direction saw the other. OWL's
+      tx_multicast froze minutes after start (132 for 8 h; again at 449 after the tray began
+      announcing), i.e. nothing from Windows reached the air. Diagnosis: head-of-line
+      blocking. OWL holds one unicast frame from the host and reads nothing else until it's
+      sent; with a fixed radio (-F), one to a peer never on channel 6 waits forever.
+      patches/owl-08: drop a unicast frame after 2 s unsendable (logged at debug). Needs
+      the service reinstalled (new owl.exe), then retest.
 - [x] Tray app (built; live test next): icon with state (radio, awdl0), menu (Receiving: Off / Everyone for 10
       minutes / Everyone; Send files...; Open Downloads; Settings; Quit), single instance,
       `--send FILES` forwarded to the running instance, Explorer "Send to > AirDrop".

@@ -46,6 +46,9 @@ if (-not $existing) {
     New-Service -Name $Name -BinaryPathName "`"$exe`"" -DisplayName 'omdrop-owl (AirDrop radio)' `
         -Description 'Runs owl.exe: AWDL over an ESP32, as the awdl0 adapter AirDrop uses.' -StartupType Automatic | Out-Null
     sc.exe failure $Name reset= 86400 actions= restart/5000/restart/30000 | Out-Null
+} else {
+    # An earlier install may have gone elsewhere (Program Files (x86), from a 32-bit shell).
+    sc.exe config $Name binPath= "`"$exe`"" | Out-Null
 }
 Start-Service $Name
 Write-Host "$Name installed in $Dest and started; log: $env:ProgramData\omdrop-owl\service.log"

@@ -123,7 +123,10 @@ shared by /Ask and /Upload, and a chunked DVZip upload.
   pnputil /delete-driver oemNN.inf /uninstall /force
   Start-Service OmdropOwl
   ```
-  Then replug the board: Device Manager should show "USB Serial Device (COMx)".
+  From a 32-bit PowerShell, `pnputil` isn't found (32-bit programs see
+  SysWOW64 as System32): use `$env:windir\Sysnative\pnputil.exe`.
+  Then replug the board, or `pnputil /scan-devices`: Device Manager should
+  show "USB Serial Device (COMx)", on usbser.inf. 3 Mbit/s works on it.
   The service finds the board by its USB IDs, so a new COM number needs no
   change there; flashing commands (`idf.py -p`) need the new one.
 - **Stop the service before flashing:** it keeps the board's serial port open.
